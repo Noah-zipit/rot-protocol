@@ -239,8 +239,9 @@ export function buildWave(n: number): { queue: EnemyKind[]; boss: EnemyKind | nu
   if (n === 10) return { queue: [], boss: null, finale: true };
   const boss = BOSS_WAVES[n] ?? null;
   if (boss) return { queue: [], boss, finale: false };
-  // mixed horde: never single-type
-  const total = Math.min(6 + n * 3, 34);
+  // mixed horde: never single-type. Wave 1 is the onboarding wave: a
+  // slightly smaller horde so a new player gets a fairer opening.
+  const total = n === 1 ? 7 : Math.min(6 + n * 3, 34);
   const queue: EnemyKind[] = [];
   for (let i = 0; i < total; i++) {
     const r = Math.random();
@@ -878,7 +879,8 @@ function updateWaves(s: GameState, dt: number) {
     if (s.spawnQueue.length > 0 && s.spawnT <= 0 && alive < s.maxConcurrent) {
       const kind = s.spawnQueue.shift()!;
       spawnEnemy(s, kind);
-      s.spawnT = 0.7;
+      // wave 1 trickles in slower: a few seconds of extra spawn grace
+      s.spawnT = s.wave === 1 ? 1.1 : 0.7;
     }
     // boss/finale trickle
     const bossWave = s.wave === 3 || s.wave === 6 || s.wave === 9 || isFinale;

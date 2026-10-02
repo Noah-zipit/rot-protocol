@@ -17,6 +17,7 @@ export class UI {
   onResume: (() => void) | null = null;
   onQuit: (() => void) | null = null;
   onRestart: (() => void) | null = null;
+  onLockClick: (() => void) | null = null;
 
   private el = (id: string) => document.getElementById(id)!;
   private bannerTimer = 0;
@@ -31,6 +32,8 @@ export class UI {
     this.el("btn-quit").addEventListener("click", () => this.onQuit?.());
     this.el("btn-restart").addEventListener("click", () => this.onRestart?.());
     this.el("btn-again").addEventListener("click", () => this.onRestart?.());
+    this.el("lock-overlay").addEventListener("click", () => this.onLockClick?.());
+    this.el("lock-box").addEventListener("click", () => this.onLockClick?.());
     // touch note vs controls list
     if (this.isTouch) {
       this.el("touch-note").classList.remove("hidden");
@@ -104,6 +107,7 @@ export class UI {
     this.el("hud").classList.toggle("hidden", name !== "playing" && name !== "pause");
     if (name === "playing" && !this.isTouch) this.el("touch-ui").classList.add("hidden");
     if (name !== "playing") this.el("banner").classList.add("hidden");
+    if (name !== "playing") this.el("lock-overlay").classList.add("hidden");
   }
 
   // ---------- HUD ----------
@@ -214,5 +218,14 @@ export class UI {
     const blocked = this.isTouch && window.innerHeight > window.innerWidth;
     this.el("rotate-overlay").classList.toggle("hidden", !blocked);
     return blocked;
+  }
+
+  /**
+   * Desktop pointer-lock prompt: shown whenever the game is live but pointer
+   * lock is not held (request denied, lost via ESC, never acquired). Without
+   * it, clicks silently do nothing — no look, no fire, no prompt.
+   */
+  setLockOverlay(visible: boolean) {
+    this.el("lock-overlay").classList.toggle("hidden", !visible);
   }
 }

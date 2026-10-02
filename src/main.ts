@@ -76,6 +76,7 @@ class Game {
     ui.onResume = () => { this.audio.uiClick(); this.togglePause(false); };
     ui.onQuit = () => { this.audio.uiClick(); this.toTitle(); };
     ui.onRestart = () => { this.audio.uiClick(); this.toTitle(); };
+    ui.onLockClick = () => { this.input.lockPointer(); };
 
     this.input.onMute = () => {
       this.muted = this.audio.toggleMute();
@@ -173,8 +174,18 @@ class Game {
 
       this.ui.updateHUD(this.sim);
 
+      if (this.sim.over || this.sim.won) {
+        // Release pointer lock on death/victory: with lock held the cursor
+        // is hidden and clicks never reach the TRY AGAIN / PLAY AGAIN
+        // buttons, which reads as a stuck death screen.
+        if (document.pointerLockElement) document.exitPointerLock();
+      }
       if (this.sim.over) this.ui.showGameOver(this.sim);
       else if (this.sim.won) this.ui.showVictory(this.sim);
+
+      // Desktop: prompt to (re)capture the mouse whenever the game is live
+      // but pointer lock is not held — otherwise clicks silently do nothing.
+      this.ui.setLockOverlay(!this.input.locked);
     } else if (this.ui.screen === "pause" && this.sim) {
       // keep rendering frozen scene; still end frame to swallow edges
       this.input.endFrame();

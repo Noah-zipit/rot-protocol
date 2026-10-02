@@ -127,6 +127,8 @@ interface EnemyView {
   dead: boolean;
   mats: THREE.Material[];
   baseOpacity: number[];
+  kind: EnemyKind;
+  variant: number;
 }
 
 interface Telegraph {
@@ -142,6 +144,10 @@ export class World {
   camera: THREE.PerspectiveCamera;
   private loader = new GLTFLoader();
   private enemyViews = new Map<number, EnemyView>();
+  // Pooled enemy views, keyed by kind (+shambler variant): spawning reuses a
+  // parked view instead of cloning a skinned rig + materials every time.
+  // That per-spawn clone was the visible hitch each time monsters spawned.
+  private enemyPool = new Map<string, EnemyView[]>();
   private modelCache = new Map<EnemyKind, THREE.Object3D>();
   private altModels = new Map<string, THREE.Object3D>();
   private modelClipsMap = new Map<string, THREE.AnimationClip[]>();
@@ -297,6 +303,9 @@ export class World {
       tick();
     }
     this.buildViewModels(gunScenes);
+    // pre-warm every enemy type (pooled views + shader compile) so the
+    // first real spawn never hitches
+    this.warmupEnemies();
     // environment kits (cached; setMap clones per placement)
     for (const p of [...graveKit, ...cityKit]) {
       await this.loadKitModel(p);
@@ -475,6 +484,9 @@ export class World {
         this.flickerLights.push(l);
       }
     }
+    // compile kit material programs now (no-op once cached) so the first
+    // gameplay frame doesn't hitch on shader compilation
+    this.renderer.compile(this.scene, this.camera);
   }
 
   // ---------- view models ----------
@@ -486,6 +498,63 @@ export class World {
 
   private gunGroups = new Map<WeaponKey | "melee", THREE.Group>();
 
+  // ---------- glove hands (FPS viewmodel) ----------
+  // Chunky pixel-style gloved hands that grip each gun. They live inside the
+  // gun's normalized group so they inherit bob/sway/kick with the weapon.
+
+  private gloveHand(mirror: boolean): THREE.Group {
+    const h = new THREE.Group();
+    const glove = new THREE.MeshLambertMaterial({ color: 0x3d4438 });
+    const gloveDark = new THREE.MeshLambertMaterial({ color: 0x2b302a });
+    // palm
+    const palm = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.085, 0.055), glove);
+    h.add(palm);
+    // curled finger block (front of palm, toward the muzzle)
+    const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.058, 0.05), gloveDark);
+    fingers.position.set(0, -0.012, -0.036);
+    fingers.rotation.x = 0.35;
+    h.add(fingers);
+    // thumb across the inner side
+    const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.055, 0.032), glove);
+    thumb.position.set(mirror ? -0.046 : 0.046, 0.004, -0.008);
+    thumb.rotation.z = (mirror ? 1 : -1) * 0.5;
+    h.add(thumb);
+    // cuff / wrist dropping down-back toward the camera
+    const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.1, 0.062), gloveDark);
+    cuff.position.set(0, -0.09, 0.022);
+    cuff.rotation.x = 0.25;
+    h.add(cuff);
+    return h;
+  }
+
+  /**
+   * Seat 1-2 gloved hands on a gun group, positioned from the gun's bbox
+   * (already normalized; `anchor` is the bbox center in group-local space).
+   * Right hand on the rear grip, left hand forward on the forend.
+   */
+  private addGripHands(parent: THREE.Group, anchor: THREE.Vector3, size: THREE.Vector3, hands: 1 | 2) {
+    const minY = anchor.y - size.y / 2;
+    const right = this.gloveHand(true);
+    right.position.set(
+      anchor.x + 0.012,
+      minY + size.y * 0.30,
+      anchor.z + size.z * 0.30
+    );
+    right.rotation.y = -0.12;
+    parent.add(right);
+    if (hands === 2) {
+      const left = this.gloveHand(false);
+      left.position.set(
+        anchor.x - 0.018,
+        minY + size.y * 0.28,
+        anchor.z - size.z * 0.10
+      );
+      left.rotation.y = 0.15;
+      left.rotation.x = -0.2;
+      parent.add(left);
+    }
+  }
+
   private normalizeRig(scene: THREE.Object3D, targetLen: number, rotY: number, anchor: THREE.Vector3): THREE.Group {
     const g = new THREE.Group();
     const inner = new THREE.Group();
@@ -494,9 +563,11 @@ export class World {
     // skinned rigs breaks their skeleton binding (plain clone) or their bind
     // matrices (SkeletonUtils.clone), collapsing or displacing the gun.
     inner.add(scene);
-    // strip the FPS arm meshes (node "ArmModel"): in a real FPS pose they sit
-    // between the camera and the gun and read as a giant tan blob. The gun
-    // meshes stay skinned to the armature so idle/shoot/reload still animate.
+    // Strip the integrated FPS arm meshes (node "ArmModel"): the J-Toastie
+    // rigs' idle/shoot/reload clips only animate the gun parts, so the arms
+    // stay frozen in their bind pose and render as giant misplaced tan
+    // limbs. Visible hands are added below as chunky glove viewmodels that
+    // always grip the gun correctly.
     const stripped: THREE.Object3D[] = [];
     inner.traverse((o) => { if (o.name === "ArmModel") stripped.push(o); });
     for (const o of stripped) o.parent?.remove(o);
@@ -512,6 +583,17 @@ export class World {
     const c = box2.getCenter(new THREE.Vector3());
     inner.position.sub(c).add(anchor);
     g.add(inner);
+    return g;
+  }
+
+  /** normalizeRig variant that also seats gloved hands on the gun. */
+  private normalizeRigWithHands(scene: THREE.Object3D, targetLen: number, rotY: number, anchor: THREE.Vector3, hands: 1 | 2): THREE.Group {
+    const g = this.normalizeRig(scene, targetLen, rotY, anchor);
+    // recompute the seated bbox in group-local space for hand placement
+    const box = new THREE.Box3().setFromObject(g);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    this.addGripHands(g, center, size, hands);
     return g;
   }
 
@@ -540,24 +622,23 @@ export class World {
 
     const ROT_FWD = Math.PI / 2; // +X -> -Z (muzzle guess; verified visually)
 
-    // rifle: full animated AKM rig (arms come along at correct relative scale)
+    // rifle: full animated AKM rig, two gloved hands (grip + forend)
     const rifleS = scenes.get("rifle");
-    show("rifle", rifleS ? this.normalizeRig(rifleS, 0.82, ROT_FWD, anchor) : null, "rifle");
+    show("rifle", rifleS ? this.normalizeRigWithHands(rifleS, 0.82, ROT_FWD, anchor, 2) : null, "rifle");
 
-    // pistol: full animated Glock rig
+    // pistol: full animated Glock rig, one gloved hand on the grip
     const pistolS = scenes.get("pistol");
-    show("pistol", pistolS ? this.normalizeRig(pistolS, 0.34, ROT_FWD, anchor.clone().add(new THREE.Vector3(-0.02, 0.02, 0.1))) : null, "pistol");
+    show("pistol", pistolS ? this.normalizeRigWithHands(pistolS, 0.34, ROT_FWD, anchor.clone().add(new THREE.Vector3(-0.02, 0.02, 0.1)), 1) : null, "pistol");
 
-    // shotgun: Mossberg mesh only — the separate arms rig is T-posed wide and
-    // does not read as holding the gun, so the gun stands alone (DOOM-style).
+    // shotgun: Mossberg mesh only, two gloved hands (grip + pump)
     const shotgunS = scenes.get("shotgun");
     if (shotgunS) {
-      show("shotgun", this.normalizeRig(shotgunS, 0.85, ROT_FWD, anchor), "shotgun");
+      show("shotgun", this.normalizeRigWithHands(shotgunS, 0.85, ROT_FWD, anchor, 2), "shotgun");
     } else {
       show("shotgun", null, "");
     }
 
-    // smg: procedural blocky smg seated at the anchor, no arms
+    // smg: procedural blocky smg seated at the anchor, two gloved hands
     {
       const g = new THREE.Group();
       const smg = this.proceduralGun("smg");
@@ -565,10 +646,12 @@ export class World {
       const c = box.getCenter(new THREE.Vector3());
       smg.position.sub(c).add(anchor);
       g.add(smg);
+      const box2 = new THREE.Box3().setFromObject(g);
+      this.addGripHands(g, box2.getCenter(new THREE.Vector3()), box2.getSize(new THREE.Vector3()), 2);
       show("smg", g, "smg");
     }
 
-    // melee: knife mesh only, angled like a held blade
+    // melee: knife mesh only, one gloved hand on the handle
     const knifeS = scenes.get("knife");
     if (knifeS) {
       const g = new THREE.Group();
@@ -584,6 +667,8 @@ export class World {
       const c = box2.getCenter(new THREE.Vector3());
       inner.position.sub(c).add(anchor.clone().add(new THREE.Vector3(0.03, -0.02, 0.12)));
       g.add(inner);
+      const box3 = new THREE.Box3().setFromObject(g);
+      this.addGripHands(g, box3.getCenter(new THREE.Vector3()), box3.getSize(new THREE.Vector3()), 1);
       show("melee", g, "knife");
     } else {
       show("melee", null, "");
@@ -668,76 +753,145 @@ export class World {
     }
   }
 
-  private syncEnemy(e: Enemy) {
-    let v = this.enemyViews.get(e.id);
-    if (!v) {
-      const altKey = e.kind === "shambler" && e.variant === 1 ? "shamblerAlt" : null;
-      const tpl = altKey ? this.altModels.get(altKey) ?? this.modelCache.get(e.kind) : this.modelCache.get(e.kind);
-      const d = ENEMIES[e.kind];
-      const group = new THREE.Group();
-      let clips: THREE.AnimationClip[] = [];
-      let mixer: THREE.AnimationMixer;
-      if (tpl) {
-        const obj = SkeletonUtils.clone(tpl);
-        // Clone materials per enemy: the cached template's materials are
-        // shared, and the zombie tint below multiplies color — without this
-        // every spawn darkened ALL zombies until they were black blobs.
-        obj.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          if (mesh.isMesh) {
-            const m = mesh.material as THREE.Material | THREE.Material[];
-            mesh.material = Array.isArray(m) ? m.map((x) => x.clone()) : m.clone();
-          }
-        });
-        group.add(obj);
-        clips = this.modelClips(altKey ?? e.kind);
-        mixer = new THREE.AnimationMixer(obj);
-      } else {
-        // procedural fallback: blocky humanoid
-        group.add(this.proceduralEnemy(e.kind));
-        mixer = new THREE.AnimationMixer(group);
-      }
-      group.scale.setScalar(d.scale);
-      // tint sickly green for zombies
-      if (e.kind === "shambler" || e.kind === "runner" || e.kind === "brute") {
-        group.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          if (mesh.isMesh) {
-            const m = mesh.material as THREE.MeshStandardMaterial;
-            if (m && "color" in m) m.color.multiply(new THREE.Color(0.72, 1.0, 0.72));
-          }
-        });
-      }
-      // boss glow marker
-      if (e.kind === "rotking") {
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(1.2, 1.6, 24),
-          new THREE.MeshBasicMaterial({ color: 0xff4438, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
-        );
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.y = 0.05;
-        group.add(ring);
-      }
-      this.scene.add(group);
-      // collect materials for the near-camera fade (enemies closer than ~1m
-      // fade out instead of becoming abstract near-plane blobs)
-      const mats: THREE.Material[] = [];
+  private poolKey(kind: EnemyKind, variant: number): string {
+    return kind === "shambler" ? `${kind}:${variant}` : kind;
+  }
+
+  /** Build a fresh enemy view (heavy: skinned-rig clone + material clones).
+   *  Only called for pool misses and the load-time pre-warm — never in the
+   *  per-spawn hot path once the pool is warm. */
+  private createEnemyView(kind: EnemyKind, variant: number): EnemyView {
+    const altKey = kind === "shambler" && variant === 1 ? "shamblerAlt" : null;
+    const tpl = altKey ? this.altModels.get(altKey) ?? this.modelCache.get(kind) : this.modelCache.get(kind);
+    const d = ENEMIES[kind];
+    const group = new THREE.Group();
+    let clips: THREE.AnimationClip[] = [];
+    let mixer: THREE.AnimationMixer;
+    if (tpl) {
+      const obj = SkeletonUtils.clone(tpl);
+      // Clone materials per view: the cached template's materials are
+      // shared, and the zombie tint below multiplies color — without this
+      // every spawn darkened ALL zombies until they were black blobs.
+      // (Cloned once per pooled view, not once per spawn.)
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) {
+          const m = mesh.material as THREE.Material | THREE.Material[];
+          mesh.material = Array.isArray(m) ? m.map((x) => x.clone()) : m.clone();
+        }
+      });
+      group.add(obj);
+      clips = this.modelClips(altKey ?? kind);
+      mixer = new THREE.AnimationMixer(obj);
+    } else {
+      // procedural fallback: blocky humanoid
+      group.add(this.proceduralEnemy(kind));
+      mixer = new THREE.AnimationMixer(group);
+    }
+    group.scale.setScalar(d.scale);
+    // tint sickly green for zombies
+    if (kind === "shambler" || kind === "runner" || kind === "brute") {
       group.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (mesh.isMesh) {
-          const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          for (const m of list) {
-            if (m && !mats.includes(m)) {
-              m.transparent = true;
-              mats.push(m);
-            }
-          }
+          const m = mesh.material as THREE.MeshStandardMaterial;
+          if (m && "color" in m) m.color.multiply(new THREE.Color(0.72, 1.0, 0.72));
         }
       });
-      const baseOpacity = mats.map((m) => m.opacity);
-      v = { group, mixer, clips, action: null, clipKey: "", dead: false, mats, baseOpacity };
-      this.enemyViews.set(e.id, v);
     }
+    // boss glow marker
+    if (kind === "rotking") {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(1.2, 1.6, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff4438, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.05;
+      group.add(ring);
+    }
+    // collect materials for the near-camera fade (enemies closer than ~1m
+    // fade out instead of becoming abstract near-plane blobs)
+    const mats: THREE.Material[] = [];
+    group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of list) {
+          if (m && !mats.includes(m)) {
+            m.transparent = true;
+            mats.push(m);
+          }
+        }
+      }
+    });
+    const baseOpacity = mats.map((m) => m.opacity);
+    return { group, mixer, clips, action: null, clipKey: "", dead: false, mats, baseOpacity, kind, variant };
+  }
+
+  /** Pre-warm every enemy type at load: build one pooled view per kind and
+   *  force-compile all shader programs NOW, so the first real spawn of each
+   *  type never hitches on program compilation or rig cloning. */
+  private warmupEnemies() {
+    const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker", "rotking", "ripper", "broodmother"];
+    const views: EnemyView[] = [];
+    for (const k of kinds) {
+      for (const variant of k === "shambler" ? [0, 1] : [0]) {
+        const v = this.createEnemyView(k, variant);
+        v.group.position.set(0, -100, 0); // far below the arena
+        v.group.visible = true;
+        this.scene.add(v.group);
+        views.push(v);
+      }
+    }
+    // compile every material program on the render thread, before gameplay
+    this.renderer.compile(this.scene, this.camera);
+    for (const v of views) this.parkEnemyView(v);
+  }
+
+  /** Return a view to its kind pool (invisible, detached, animation reset). */
+  private parkEnemyView(v: EnemyView) {
+    if (v.action) { v.action.stop(); v.action = null; }
+    v.clipKey = "";
+    v.dead = false;
+    for (let i = 0; i < v.mats.length; i++) v.mats[i].opacity = v.baseOpacity[i];
+    v.group.visible = false;
+    if (v.group.parent) v.group.parent.remove(v.group);
+    const key = this.poolKey(v.kind, v.variant);
+    let arr = this.enemyPool.get(key);
+    if (!arr) { arr = []; this.enemyPool.set(key, arr); }
+    // cap the pool so a pathological wave can't pin unbounded GPU memory
+    if (arr.length < 10) arr.push(v);
+  }
+
+  private releaseEnemyView(id: number) {
+    const v = this.enemyViews.get(id);
+    if (!v) return;
+    this.enemyViews.delete(id);
+    this.parkEnemyView(v);
+  }
+
+  /** Get the live view for an enemy: reuse the parked pool view for its
+   *  kind when available, otherwise build one (pool miss). */
+  private obtainEnemyView(e: Enemy): EnemyView {
+    let v = this.enemyViews.get(e.id);
+    if (v) return v;
+    const key = this.poolKey(e.kind, e.variant);
+    const arr = this.enemyPool.get(key);
+    if (arr && arr.length > 0) {
+      v = arr.pop()!;
+      this.scene.add(v.group);
+      v.group.visible = true;
+      this.enemyViews.set(e.id, v);
+      return v;
+    }
+    v = this.createEnemyView(e.kind, e.variant);
+    this.scene.add(v.group);
+    this.enemyViews.set(e.id, v);
+    return v;
+  }
+
+  private syncEnemy(e: Enemy) {
+    const v = this.obtainEnemyView(e);
 
     const d = ENEMIES[e.kind];
     v.group.position.set(e.pos.x, e.pos.y + (e.state === "spawn" ? -(1 - e.stateT / 0.9) * (d.flying ? 0 : 1.6) : 0), e.pos.z);
@@ -816,8 +970,7 @@ export class World {
   }
 
   clearEnemies() {
-    for (const [, v] of this.enemyViews) this.scene.remove(v.group);
-    this.enemyViews.clear();
+    for (const id of [...this.enemyViews.keys()]) this.releaseEnemyView(id);
     this.telegraphs = [];
   }
 
@@ -947,9 +1100,9 @@ export class World {
       tg.mesh.rotation.z = Math.atan2(e.dashDir.x, e.dashDir.z);
       (tg.mesh.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.35 * Math.abs(Math.sin(timeSec * 14));
     }
-    // remove stale enemy views
-    for (const [id, v] of this.enemyViews) {
-      if (!seen.has(id)) { this.scene.remove(v.group); this.enemyViews.delete(id); }
+    // remove stale enemy views -> back to the pool
+    for (const [id] of this.enemyViews) {
+      if (!seen.has(id)) this.releaseEnemyView(id);
     }
     // telegraph cleanup
     for (let i = this.telegraphs.length - 1; i >= 0; i--) {

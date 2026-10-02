@@ -94,6 +94,14 @@
         </div>
       </div>
 
+      <!-- Pointer-lock prompt (desktop only, wired by UI.setLockOverlay) -->
+      <div id="lock-overlay" class="hidden">
+        <button class="lock-box" id="lock-box">
+          <p class="lock-title">CLICK TO CAPTURE MOUSE</p>
+          <p class="lock-sub">AIM + FIRE NEED POINTER LOCK</p>
+        </button>
+      </div>
+
       <div id="screen-loading" class="screen"><p id="loading-label">LOADING 0%</p></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
