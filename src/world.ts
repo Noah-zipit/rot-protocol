@@ -1,6 +1,7 @@
 /**
  * ROT PROTOCOL — Three.js rendering layer. Reads GameState, never mutates it.
- * Pixel look: fixed low internal resolution (426x240), CSS upscaled.
+ * HD look: dynamic resolution (native DPR when fast, scaled down when slow),
+ * ACES tone mapping, shadow-casting moonlight, gradient sky dome.
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -8,18 +9,11 @@ import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import type { GameState, Enemy, EnemyKind, MapKey, WeaponKey, Obstacle } from "./sim";
 import { ENEMIES } from "./sim";
 
-const PX_H_BASE = 240;
+export type QualityMode = "auto" | "high" | "medium" | "low";
 
-function computeInternalSize(): [number, number] {
-  const w = window.innerWidth, h = window.innerHeight;
-  const aspect = w / Math.max(1, h);
-  let iw: number, ih: number;
-  if (aspect >= 1) { ih = PX_H_BASE; iw = Math.round(PX_H_BASE * aspect); }
-  else { iw = PX_H_BASE; ih = Math.round(PX_H_BASE / aspect); }
-  iw = Math.max(160, Math.min(720, iw));
-  ih = Math.max(160, Math.min(720, ih));
-  return [iw, ih];
-}
+// Dynamic-resolution steps (fraction of capped DPR). The scaler walks this
+// ladder every ~2s to hold 60fps: down when slow, back up when fast.
+const RES_STEPS = [1.0, 0.85, 0.7, 0.55, 0.45];
 
 // ---------------- procedural pixel textures ----------------
 
@@ -171,9 +165,15 @@ export class World {
   private telegraphs: Telegraph[] = [];
   private bossLight: THREE.PointLight | null = null;
   private ambient: THREE.AmbientLight;
+  private moonLight: THREE.DirectionalLight;
   private shieldMesh: THREE.Mesh | null = null;
   fps = 60;
   quality = 0; // 0 full, 1 reduced, 2 minimal
+  qualityMode: QualityMode = "auto";
+  private resScale = 1.0;
+  private resT = 0;
+  private resUpT = 0;
+  private dprCap: number;
   private lowT = 0;
   private hiT = 0;
   isTouch: boolean;
@@ -182,29 +182,50 @@ export class World {
 
   constructor(canvas: HTMLCanvasElement, isTouch: boolean) {
     this.isTouch = isTouch;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "low-power" });
-    this.renderer.setPixelRatio(1);
-    this.renderer.shadowMap.enabled = false;
-    // three r155+: lights use physical units by default; keep legacy intensity feel
-    const [iw, ih] = computeInternalSize();
-    this.camera = new THREE.PerspectiveCamera(75, iw / ih, 0.05, 260);
-    this.fitViewport();
+    this.dprCap = isTouch ? 1.5 : 2;
+    try {
+      const saved = localStorage.getItem("rp-quality");
+      if (saved === "high" || saved === "medium" || saved === "low") this.qualityMode = saved;
+    } catch { /* storage unavailable */ }
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    // HD pipeline: ACES filmic tone mapping + soft shadows. No EffectComposer
+    // (too expensive on mobile) — grading comes from lights + CSS vignette.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+    this.camera = new THREE.PerspectiveCamera(75, aspect, 0.05, 400);
     this.scene.add(this.camera);
-    this.scene.background = new THREE.Color(0x0a1220);
-    this.scene.fog = new THREE.Fog(0x101820, 8, isTouch ? 34 : 52);
+    this.scene.fog = new THREE.Fog(0x16202c, 10, isTouch ? 40 : 60);
+    this.makeSky();
 
-    // ---- lighting pass: the scene must READ. cold moonlight key, warm fill,
-    // dim blue ambient so nothing is ever pitch black.
-    const hemi = new THREE.HemisphereLight(0x5a6f8e, 0x1a2030, 1.25);
+    // ---- lighting rig: cold moonlight key (shadow caster), hemisphere fill,
+    // dim blue ambient so nothing is ever pitch black. Mobile keeps 3 base
+    // lights; the warm fill directional is desktop-only.
+    const hemi = new THREE.HemisphereLight(0x6a7f9e, 0x1c2436, 1.5);
     this.scene.add(hemi);
-    const moon = new THREE.DirectionalLight(0x9db8dd, 1.15);
-    moon.position.set(-14, 22, 8);
+    const moon = new THREE.DirectionalLight(0xa8c4e8, 1.7);
+    moon.position.set(-18, 30, 10);
+    moon.castShadow = true;
+    moon.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
+    // tight ortho bounds around the arena: crisp shadows, no wasted texels
+    const sc = moon.shadow.camera;
+    sc.left = -38; sc.right = 38; sc.top = 38; sc.bottom = -38;
+    sc.near = 1; sc.far = 90;
+    moon.shadow.bias = -0.0004;
+    moon.shadow.normalBias = 0.6;
     this.scene.add(moon);
-    const fill = new THREE.DirectionalLight(0xffd9a0, 0.6);
-    fill.position.set(12, 9, -14);
-    this.scene.add(fill);
-    this.ambient = new THREE.AmbientLight(0x2a3a55, 0.65);
+    this.scene.add(moon.target);
+    this.moonLight = moon;
+    if (!isTouch) {
+      const fill = new THREE.DirectionalLight(0xffd9a0, 0.7);
+      fill.position.set(12, 9, -14);
+      this.scene.add(fill);
+    }
+    this.ambient = new THREE.AmbientLight(0x2a3a55, 0.55);
     this.scene.add(this.ambient);
+    this.applyResolution();
 
     this.particles = new ParticlePool(isTouch ? 160 : 420);
     this.scene.add(this.particles.points);
@@ -233,14 +254,94 @@ export class World {
     this.scene.add(this.shieldMesh);
   }
 
-  /** Match the internal render buffer to the real screen aspect so the
-   *  canvas always fills the visible screen exactly: no stretch, no crop,
-   *  no letterbox. Called on resize + visualViewport changes. */
-  fitViewport() {
-    const [iw, ih] = computeInternalSize();
-    this.renderer.setSize(iw, ih, false);
-    this.camera.aspect = iw / ih;
+  /**
+   * Dynamic resolution: render at min(devicePixelRatio, cap) × resScale.
+   * resScale walks the RES_STEPS ladder to hold 60fps; the canvas always
+   * fills the screen exactly (no stretch, crop, or letterbox).
+   * Called on resize + visualViewport changes.
+   */
+  private applyResolution() {
+    const dpr = Math.min(window.devicePixelRatio || 1, this.dprCap) * this.resScale;
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    this.camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
     this.camera.updateProjectionMatrix();
+  }
+
+  fitViewport() {
+    this.applyResolution();
+  }
+
+  /** Gradient night-sky dome with stars: one draw call, no lighting cost. */
+  private makeSky() {
+    const c = document.createElement("canvas");
+    c.width = 512; c.height = 256;
+    const g = c.getContext("2d")!;
+    const grad = g.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0.0, "#02040a");
+    grad.addColorStop(0.45, "#071120");
+    grad.addColorStop(0.72, "#0e1c2e");
+    grad.addColorStop(0.88, "#1b2b3a");
+    grad.addColorStop(1.0, "#0a0f16");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 512, 256);
+    // stars in the upper sky
+    let seed = 12345;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 220; i++) {
+      const x = rnd() * 512, y = rnd() * 150;
+      const a = 0.25 + rnd() * 0.65;
+      g.fillStyle = `rgba(200,220,255,${a.toFixed(2)})`;
+      const s = rnd() < 0.12 ? 2 : 1;
+      g.fillRect(x | 0, y | 0, s, s);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(220, 24, 16),
+      new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false })
+    );
+    sky.renderOrder = -10;
+    this.scene.add(sky);
+  }
+
+  /**
+   * Quality tiers. Auto (default) runs the dynamic scaler; High/Medium/Low
+   * pin the ladder. Persisted to localStorage.
+   */
+  setQualityMode(mode: QualityMode) {
+    this.qualityMode = mode;
+    try { localStorage.setItem("rp-quality", mode); } catch { /* ignore */ }
+    if (mode === "high") {
+      this.quality = 0; this.resScale = 1.0; this.shadowsOn = true;
+    } else if (mode === "medium") {
+      this.quality = 1; this.resScale = 0.7; this.shadowsOn = true;
+    } else if (mode === "low") {
+      this.quality = 2; this.resScale = 0.5; this.shadowsOn = false;
+    }
+    // auto: leave current ladder position, the scaler takes it from here
+    this.setShadows(this.shadowsOn);
+    this.applyQuality();
+    this.applyResolution();
+  }
+
+  private setShadows(on: boolean) {
+    this.renderer.shadowMap.enabled = on;
+    this.moonLight.castShadow = on;
+    // toggling the shadow map needs material programs rebuilt once
+    for (const m of this.sceneMaterials()) m.needsUpdate = true;
+  }
+
+  private sceneMaterials(): THREE.Material[] {
+    const out: THREE.Material[] = [];
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of list) if (m && !out.includes(m)) out.push(m);
+      }
+    });
+    return out;
   }
 
   // ---------- asset loading ----------
@@ -335,6 +436,11 @@ export class World {
     m.rotation.y = opts.yaw ?? 0;
     if (opts.tilt) m.rotation.z = opts.tilt;
     if (opts.scale) m.scale.setScalar(opts.scale);
+    // kit props cast + receive the moonlight shadows
+    m.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+    });
     this.arenaGroup.add(m);
     return m;
   }
@@ -355,11 +461,11 @@ export class World {
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 
     const isGrave = map === "graveyard";
-    this.scene.background = new THREE.Color(isGrave ? 0x0a1424 : 0x0b0d12);
+    // sky dome is constant; fog tint follows the map
     if (this.scene.fog instanceof THREE.Fog) {
-      this.scene.fog.color.set(isGrave ? 0x14202e : 0x0d1118);
-      this.scene.fog.near = 8;
-      this.scene.fog.far = this.isTouch ? 34 : 52;
+      this.scene.fog.color.set(isGrave ? 0x1a2632 : 0x12161d);
+      this.scene.fog.near = 10;
+      this.scene.fog.far = this.isTouch ? 40 : 60;
     }
 
     const groundTex = groundTexture(map);
@@ -369,6 +475,7 @@ export class World {
       new THREE.MeshLambertMaterial({ map: groundTex, color: 0xffffff })
     );
     ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
     this.arenaGroup.add(ground);
 
     if (isGrave) {
@@ -459,6 +566,7 @@ export class World {
       for (const z of [-8, 8]) {
         const road = new THREE.Mesh(new THREE.PlaneGeometry(64, 5), roadMat);
         road.rotation.x = -Math.PI / 2; road.position.set(0, 0.02, z);
+        road.receiveShadow = true;
         this.arenaGroup.add(road);
       }
       for (const x of [-8, 8]) {
@@ -467,6 +575,7 @@ export class World {
         ((road.material as THREE.MeshLambertMaterial).map as THREE.Texture).repeat.set(1, 8);
         ((road.material as THREE.MeshLambertMaterial).map as THREE.Texture).needsUpdate = true;
         road.rotation.x = -Math.PI / 2; road.position.set(x, 0.02, 0);
+        road.receiveShadow = true;
         this.arenaGroup.add(road);
       }
       // wrecked cars on the random obstacles (colliders r=1.3)
@@ -836,6 +945,11 @@ export class World {
       }
     });
     const baseOpacity = mats.map((m) => m.opacity);
+    // enemies cast + receive moonlight shadows (pooled views keep flags)
+    group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+    });
     return { group, mixer, clips, action: null, clipKey: "", dead: false, mats, baseOpacity, kind, variant };
   }
 
@@ -1058,16 +1172,39 @@ export class World {
   // ---------- per-frame ----------
 
   update(dt: number, s: GameState, timeSec: number) {
-    // fps tracking + auto quality scaler
+    // fps tracking + dynamic resolution / quality scaler
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
-    if (this.fps < 30 && this.quality < 2) {
-      this.lowT += dt;
-      if (this.lowT > 3) { this.quality++; this.lowT = 0; this.applyQuality(); }
-    } else this.lowT = 0;
-    if (this.fps > 52 && this.quality > 0) {
-      this.hiT += dt;
-      if (this.hiT > 10) { this.quality--; this.hiT = 0; this.applyQuality(); }
-    } else this.hiT = 0;
+    if (this.qualityMode === "auto") {
+      // fast loop: walk the resolution ladder every ~2s to hold 60fps
+      const step = RES_STEPS.indexOf(this.resScale);
+      this.resT += dt;
+      if (this.resT >= 2) {
+        this.resT = 0;
+        if (this.fps < 45 && step < RES_STEPS.length - 1) {
+          this.resScale = RES_STEPS[step + 1];
+          this.resUpT = 0;
+          this.applyResolution();
+        } else if (this.fps > 57) {
+          this.resUpT += 2;
+          if (this.resUpT >= 6 && step > 0) {
+            this.resScale = RES_STEPS[step - 1];
+            this.resUpT = 0;
+            this.applyResolution();
+          }
+        } else this.resUpT = 0;
+      }
+      // coarse fallback: only when the resolution ladder is exhausted
+      const atMin = this.resScale === RES_STEPS[RES_STEPS.length - 1];
+      const atMax = this.resScale === RES_STEPS[0];
+      if (this.fps < 30 && this.quality < 2 && atMin) {
+        this.lowT += dt;
+        if (this.lowT > 3) { this.quality++; this.lowT = 0; this.applyQuality(); }
+      } else this.lowT = 0;
+      if (this.fps > 52 && this.quality > 0 && atMax) {
+        this.hiT += dt;
+        if (this.hiT > 10) { this.quality--; this.hiT = 0; this.applyQuality(); }
+      } else this.hiT = 0;
+    }
 
     // flickering lights (base intensity stored per light at creation)
     const q = this.quality;
@@ -1200,11 +1337,21 @@ export class World {
     // melee auto-hide: main.ts calls setGun back after swing
   }
 
+  private shadowsOn = true;
+
   private applyQuality() {
     const q = this.quality;
     // tighter fog on minimal
     if (this.scene.fog instanceof THREE.Fog) {
-      this.scene.fog.far = q === 2 ? 30 : this.isTouch ? 34 : 52;
+      this.scene.fog.far = q === 2 ? 30 : this.isTouch ? 40 : 60;
+    }
+    // shadows are the single most expensive feature: off at minimal tier,
+    // on otherwise (manual Low pins quality 2; Auto only gets here when the
+    // resolution ladder is exhausted)
+    const want = q < 2;
+    if (want !== this.shadowsOn) {
+      this.shadowsOn = want;
+      this.setShadows(want);
     }
   }
 

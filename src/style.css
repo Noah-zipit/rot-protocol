@@ -33,10 +33,30 @@ body { position: fixed; inset: 0; }
 #game-canvas {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
   display: block;
 }
+
+/* cinematic vignette: pure CSS, zero GPU cost */
+#vignette {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(2, 6, 10, 0.45) 100%);
+  z-index: 5;
+}
+
+/* pause-screen quality selector */
+#quality-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 4px 0;
+}
+.q-label { font-size: 10px; color: var(--dim); letter-spacing: 2px; }
+.qbtn {
+  font-family: inherit; font-size: 10px; letter-spacing: 1px;
+  padding: 8px 12px; cursor: pointer;
+  color: var(--dim); background: #141a18;
+  border: 2px solid #2a3330;
+}
+.qbtn.active { color: var(--green); border-color: var(--green); background: #1c2a22; }
 
 .hidden { display: none !important; }
 
@@ -175,18 +195,20 @@ body { position: fixed; inset: 0; }
 #hitmarker.kill::before, #hitmarker.kill::after { background: var(--red); }
 @keyframes hitpop { 0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.4); } 100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(0.8); } }
 
+/* player HP: top-left cluster, directly under WAVE + HOSTILES */
 #health-wrap {
-  position: absolute; left: calc(18px + env(safe-area-inset-left)); bottom: calc(18px + env(safe-area-inset-bottom));
-  width: min(300px, 34vw); height: 26px;
-  background: #101512; border: 2px solid #2a352e;
+  position: absolute; left: calc(18px + env(safe-area-inset-left)); top: calc(64px + env(safe-area-inset-top));
+  width: min(200px, 30vw); height: 20px;
+  background: #0c100e; border: 2px solid #2a352e;
 }
-#health-bar { height: 100%; width: 100%; background: #3fae52; transition: width 0.15s; }
-#health-bar.low { background: var(--red); }
-#health-num { position: absolute; right: 8px; top: 5px; font-size: 10px; color: #fff; text-shadow: 1px 1px 0 #000; }
+#health-bar { height: 100%; width: 100%; background: linear-gradient(#46c45c, #2f9a44); transition: width 0.15s; }
+#health-bar.low { background: linear-gradient(#e04030, #a02818); }
+#health-num { position: absolute; right: 6px; top: 3px; font-size: 9px; color: #fff; text-shadow: 1px 1px 0 #000; }
 
 #ammo-wrap {
   position: absolute; right: calc(18px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom));
-  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  background: rgba(8, 12, 10, 0.55); border: 2px solid #2a352e; padding: 8px 10px;
 }
 #weapon-name { font-size: 10px; color: var(--dim); }
 #ammo { font-size: 18px; color: var(--ink); text-shadow: 2px 2px 0 #000; }
@@ -309,9 +331,9 @@ body { position: fixed; inset: 0; }
 
 /* keep HUD clear of touch buttons */
 @media (pointer: coarse) {
-  #health-wrap { bottom: 210px; left: 14px; }
   #ammo-wrap { bottom: 210px; right: 14px; }
   #wave-wrap { top: 8px; left: 12px; }
+  #health-wrap { top: 56px; left: 12px; }
   #score-wrap { top: 8px; right: 130px; }
 }
 
@@ -395,7 +417,7 @@ body { position: fixed; inset: 0; }
   #btn-swap { bottom: calc(110px + env(safe-area-inset-bottom)); right: calc(178px + env(safe-area-inset-right)); }
   #btn-melee { bottom: calc(40px + env(safe-area-inset-bottom)); right: calc(178px + env(safe-area-inset-right)); }
   #btn-sprint { bottom: calc(62px + env(safe-area-inset-bottom)); left: calc(150px + env(safe-area-inset-left)); }
-  #health-wrap { bottom: calc(150px + env(safe-area-inset-bottom)); width: min(220px, 30vw); height: 22px; }
+  #health-wrap { top: calc(52px + env(safe-area-inset-top)); left: 12px; width: min(170px, 30vw); height: 18px; }
   #ammo-wrap { bottom: calc(225px + env(safe-area-inset-bottom)); right: calc(14px + env(safe-area-inset-right)); }
   #ammo { font-size: 15px; }
   #wave-label { font-size: 11px; }

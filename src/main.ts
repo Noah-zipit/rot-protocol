@@ -32,6 +32,9 @@ class Game {
   // it) leaves the player defenseless — auto-pause instead
   private lockWasHeld = false;
   private runStartT = 0;
+  // test-only: ?noautopause=1 skips the pointer-lock auto-pause so headless
+  // captures can see live frames (same pattern as ?artcheck=)
+  private noAutoPause = false;
 
   async boot() {
     this.ui.show("loading");
@@ -43,6 +46,8 @@ class Game {
       // models failed; world has procedural fallbacks
     }
     this.wireUI();
+    this.ui.onQuality = (m) => this.world?.setQualityMode(m as "auto" | "high" | "medium" | "low");
+    this.ui.setQualityMode(this.world.qualityMode);
     // keep the render buffer matched to the real visible screen
     const onResize = () => {
       this.world?.fitViewport();
@@ -55,6 +60,7 @@ class Game {
     this.ui.show("title");
     // ?artcheck=<graveyard|city>: test-only auto-run with staged enemies for screenshots
     const art = new URLSearchParams(location.search).get("artcheck");
+    this.noAutoPause = new URLSearchParams(location.search).has("noautopause");
     if (art === "graveyard" || art === "city") {
       this.ui.selectedMap = art;
       this.startRun(["pistol", "shotgun"]);
@@ -158,7 +164,7 @@ class Game {
       // is left defenseless while zombies keep coming. Auto-pause instead;
       // resuming re-requests lock from the click gesture. A short grace at
       // run start covers the async lock acquisition after DEPLOY.
-      if (!isTouchDevice && !this.sim.over && !this.sim.won) {
+      if (!isTouchDevice && !this.sim.over && !this.sim.won && !this.noAutoPause) {
         if (this.input.locked) this.lockWasHeld = true;
         else if (this.lockWasHeld || performance.now() - this.runStartT > 5000) {
           this.togglePause(true);

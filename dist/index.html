@@ -7,12 +7,13 @@
     <meta name="theme-color" content="#0b1210" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>ROT PROTOCOL — Pixel Zombie FPS</title>
-    <script type="module" crossorigin src="./assets/index-cNQ1_HXF.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BKGPw9xf.css">
+    <script type="module" crossorigin src="./assets/index-CWbxvLBV.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Nzz6lTH9.css">
   </head>
   <body>
     <div id="app">
       <canvas id="game-canvas"></canvas>
+      <div id="vignette"></div>
 
       <!-- HUD -->
       <div id="hud" class="hidden">
@@ -68,6 +69,13 @@
       <div id="screen-pause" class="screen hidden">
         <h2>PAUSED</h2>
         <button id="btn-resume" class="btn">RESUME</button>
+        <div id="quality-row">
+          <span class="q-label">QUALITY</span>
+          <button class="qbtn" data-q="auto">AUTO</button>
+          <button class="qbtn" data-q="high">HIGH</button>
+          <button class="qbtn" data-q="medium">MED</button>
+          <button class="qbtn" data-q="low">LOW</button>
+        </div>
         <button id="btn-quit" class="btn btn-dim">ABANDON RUN</button>
       </div>
 

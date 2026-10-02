@@ -18,6 +18,7 @@ export class UI {
   onQuit: (() => void) | null = null;
   onRestart: (() => void) | null = null;
   onLockClick: (() => void) | null = null;
+  onQuality: ((mode: string) => void) | null = null;
 
   private el = (id: string) => document.getElementById(id)!;
   private bannerTimer = 0;
@@ -34,6 +35,14 @@ export class UI {
     this.el("btn-again").addEventListener("click", () => this.onRestart?.());
     this.el("lock-overlay").addEventListener("click", () => this.onLockClick?.());
     this.el("lock-box").addEventListener("click", () => this.onLockClick?.());
+    // pause-screen quality selector
+    this.el("quality-row").querySelectorAll(".qbtn").forEach((b) => {
+      b.addEventListener("click", () => {
+        const m = (b as HTMLElement).dataset.q ?? "auto";
+        this.setQualityMode(m);
+        this.onQuality?.(m);
+      });
+    });
     // touch note vs controls list
     if (this.isTouch) {
       this.el("touch-note").classList.remove("hidden");
@@ -227,5 +236,12 @@ export class UI {
    */
   setLockOverlay(visible: boolean) {
     this.el("lock-overlay").classList.toggle("hidden", !visible);
+  }
+
+  /** Reflect the active quality tier on the pause-screen selector. */
+  setQualityMode(mode: string) {
+    this.el("quality-row").querySelectorAll(".qbtn").forEach((b) => {
+      b.classList.toggle("active", (b as HTMLElement).dataset.q === mode);
+    });
   }
 }
