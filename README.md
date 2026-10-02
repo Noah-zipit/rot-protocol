@@ -115,7 +115,11 @@ No environment variables, no server functions, no database.
 | Blue Demon (The Ripper) | Quaternius via poly.pizza | Public Domain (CC0) — credit Quaternius |
 | Giant (The Broodmother) | Quaternius via poly.pizza | Public Domain (CC0) — credit Quaternius |
 | FPS pack (AKM rig, Glock rig, FPS arms, Mossberg 590A1, Combat Knife) | "FPS pack" bundle by J-Toastie via poly.pizza | CC-BY — credit J-Toastie |
-| SMG view model, arenas | Built procedurally in code | — |
+| Graveyard arena kit (14 pieces: tombstones, dead trees, crypt, fences, gate, lanterns, coffins) | "Graveyard Kit" by Kenney (kenney.nl) | CC0 — credit Kenney |
+| City arena kit: Building, Car, SUV, Police Car, Path Straight | "City Pack" by dreamdev via poly.pizza — models by Quaternius | CC0 — credit Quaternius |
+| City arena kit: Large Building, Large Building 2 | "City Pack" by dreamdev via poly.pizza — models by Kenney | CC0 — credit Kenney |
+| City arena kit: Road Bits, Traffic light | "City Pack" by dreamdev via poly.pizza — models by Kay Lousberg | CC0 — credit Kay Lousberg |
+| SMG view model | Built procedurally in code (matches J-Toastie style) | own |
 | All audio | Procedural WebAudio (no audio files) | — |
 | Font | "Press Start 2P" via @fontsource (bundled, offline-safe) | OFL |
 

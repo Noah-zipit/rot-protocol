@@ -5,10 +5,21 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
-import type { GameState, Enemy, EnemyKind, MapKey, WeaponKey } from "./sim";
+import type { GameState, Enemy, EnemyKind, MapKey, WeaponKey, Obstacle } from "./sim";
 import { ENEMIES } from "./sim";
 
-const PX_W = 426, PX_H = 240;
+const PX_H_BASE = 240;
+
+function computeInternalSize(): [number, number] {
+  const w = window.innerWidth, h = window.innerHeight;
+  const aspect = w / Math.max(1, h);
+  let iw: number, ih: number;
+  if (aspect >= 1) { ih = PX_H_BASE; iw = Math.round(PX_H_BASE * aspect); }
+  else { iw = PX_H_BASE; ih = Math.round(PX_H_BASE / aspect); }
+  iw = Math.max(160, Math.min(720, iw));
+  ih = Math.max(160, Math.min(720, ih));
+  return [iw, ih];
+}
 
 // ---------------- procedural pixel textures ----------------
 
@@ -26,30 +37,21 @@ function pixelTexture(draw: (g: CanvasRenderingContext2D, w: number, h: number) 
 
 function groundTexture(map: MapKey): THREE.CanvasTexture {
   return pixelTexture((g, w, h) => {
-    g.fillStyle = map === "graveyard" ? "#1a241f" : "#14171c";
+    // brighter than before: the scene must read, not drown
+    g.fillStyle = map === "graveyard" ? "#232e28" : "#1a1f26";
     g.fillRect(0, 0, w, h);
     for (let i = 0; i < 260; i++) {
       const x = (Math.random() * w) | 0, y = (Math.random() * h) | 0;
       const v = Math.random();
       g.fillStyle = map === "graveyard"
-        ? (v < 0.5 ? "#16201b" : v < 0.8 ? "#1f2b24" : "#242f28")
-        : (v < 0.5 ? "#101318" : v < 0.8 ? "#171b21" : "#1c2129");
+        ? (v < 0.5 ? "#1f2a24" : v < 0.8 ? "#2a362d" : "#31402f")
+        : (v < 0.5 ? "#161b22" : v < 0.8 ? "#1e242e" : "#252c38");
       g.fillRect(x, y, 2, 2);
     }
     if (map === "city") {
       // asphalt cracks
-      g.fillStyle = "#0e1114";
+      g.fillStyle = "#12161c";
       for (let i = 0; i < 8; i++) g.fillRect((Math.random() * w) | 0, 0, 1, h);
-    }
-  });
-}
-
-function buildingTexture(): THREE.CanvasTexture {
-  return pixelTexture((g, w, h) => {
-    g.fillStyle = "#0d1116"; g.fillRect(0, 0, w, h);
-    for (let y = 4; y < h; y += 8) for (let x = 4; x < w; x += 8) {
-      g.fillStyle = Math.random() < 0.28 ? "#e8a34c" : "#141a21";
-      g.fillRect(x, y, 4, 4);
     }
   });
 }
@@ -142,7 +144,6 @@ export class World {
   private altModels = new Map<string, THREE.Object3D>();
   private modelClipsMap = new Map<string, THREE.AnimationClip[]>();
   private arenaGroup = new THREE.Group();
-  private map: MapKey = "graveyard";
   private particles: ParticlePool;
   private flickerLights: THREE.PointLight[] = [];
   private muzzleLight: THREE.PointLight;
@@ -155,6 +156,7 @@ export class World {
   private shake = 0;
   private telegraphs: Telegraph[] = [];
   private bossLight: THREE.PointLight | null = null;
+  private ambient: THREE.AmbientLight;
   private shieldMesh: THREE.Mesh | null = null;
   fps = 60;
   quality = 0; // 0 full, 1 reduced, 2 minimal
@@ -167,30 +169,38 @@ export class World {
   constructor(canvas: HTMLCanvasElement, isTouch: boolean) {
     this.isTouch = isTouch;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "low-power" });
-    this.renderer.setSize(PX_W, PX_H, false);
     this.renderer.setPixelRatio(1);
     this.renderer.shadowMap.enabled = false;
-    this.camera = new THREE.PerspectiveCamera(75, PX_W / PX_H, 0.05, 220);
+    // three r155+: lights use physical units by default; keep legacy intensity feel
+    const [iw, ih] = computeInternalSize();
+    this.camera = new THREE.PerspectiveCamera(75, iw / ih, 0.05, 260);
+    this.fitViewport();
     this.scene.add(this.camera);
-    this.scene.background = new THREE.Color(0x070b12);
-    this.scene.fog = new THREE.Fog(0x0a0f16, 8, isTouch ? 34 : 52);
+    this.scene.background = new THREE.Color(0x0a1220);
+    this.scene.fog = new THREE.Fog(0x101820, 8, isTouch ? 34 : 52);
 
-    // lights
-    const hemi = new THREE.HemisphereLight(0x3a4a5e, 0x0a0d0a, 0.85);
+    // ---- lighting pass: the scene must READ. cold moonlight key, warm fill,
+    // dim blue ambient so nothing is ever pitch black.
+    const hemi = new THREE.HemisphereLight(0x5a6f8e, 0x1a2030, 1.15);
     this.scene.add(hemi);
-    const moon = new THREE.DirectionalLight(0x8fa8c8, 0.5);
+    const moon = new THREE.DirectionalLight(0x9db8dd, 1.0);
     moon.position.set(-14, 22, 8);
     this.scene.add(moon);
+    const fill = new THREE.DirectionalLight(0xffd9a0, 0.28);
+    fill.position.set(12, 9, -14);
+    this.scene.add(fill);
+    this.ambient = new THREE.AmbientLight(0x2a3a55, 0.5);
+    this.scene.add(this.ambient);
 
     this.particles = new ParticlePool(isTouch ? 160 : 420);
     this.scene.add(this.particles.points);
     this.scene.add(this.arenaGroup);
 
     // muzzle flash
-    this.muzzleLight = new THREE.PointLight(0xffa63d, 0, 14, 1.8);
+    this.muzzleLight = new THREE.PointLight(0xffa63d, 0, 26, 1.7);
     this.camera.add(this.muzzleLight);
     this.muzzleFlash = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.22, 0.22),
+      new THREE.PlaneGeometry(0.30, 0.30),
       new THREE.MeshBasicMaterial({ color: 0xffc46b, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })
     );
     this.camera.add(this.muzzleFlash);
@@ -209,11 +219,48 @@ export class World {
     this.scene.add(this.shieldMesh);
   }
 
+  /** Match the internal render buffer to the real screen aspect so the
+   *  canvas always fills the visible screen exactly: no stretch, no crop,
+   *  no letterbox. Called on resize + visualViewport changes. */
+  fitViewport() {
+    const [iw, ih] = computeInternalSize();
+    this.renderer.setSize(iw, ih, false);
+    this.camera.aspect = iw / ih;
+    this.camera.updateProjectionMatrix();
+  }
+
   // ---------- asset loading ----------
+
+  private kitCache = new Map<string, THREE.Object3D>();
+
+  private async loadKitModel(path: string): Promise<THREE.Object3D | null> {
+    if (this.kitCache.has(path)) return this.kitCache.get(path)!;
+    try {
+      const g = await this.loader.loadAsync(`./models/${path}`);
+      this.kitCache.set(path, g.scene);
+      return g.scene;
+    } catch {
+      return null;
+    }
+  }
 
   async loadAll(onProgress: (pct: number) => void) {
     const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker", "rotking", "ripper", "broodmother"];
-    const total = kinds.length + 5; // +5 gun rigs
+    const graveKit = [
+      "graveyard/gstone-cross.glb", "graveyard/gstone-round.glb",
+      "graveyard/gstone-broken.glb", "graveyard/gstone-wide.glb",
+      "graveyard/deadtree.glb", "graveyard/deadtree-long.glb",
+      "graveyard/crypt.glb", "graveyard/fence-wood.glb",
+      "graveyard/fence-iron.glb", "graveyard/gate.glb",
+      "graveyard/lantern.glb", "graveyard/coffin.glb",
+      "graveyard/graveplot.glb", "graveyard/crosswood.glb",
+    ];
+    const cityKit = [
+      "city/building.glb", "city/large1.glb", "city/large2.glb",
+      "city/car.glb", "city/suv.glb", "city/policecar.glb",
+      "city/roadstrip.glb", "city/roadbits.glb", "city/trafficlight.glb",
+    ];
+    const total = kinds.length + 5 + graveKit.length + cityKit.length; // +5 gun rigs
     let done = 0;
     const tick = () => { done++; onProgress(done / total); };
     for (const k of kinds) {
@@ -248,15 +295,55 @@ export class World {
       tick();
     }
     this.buildViewModels(gunScenes);
+    // environment kits (cached; setMap clones per placement)
+    for (const p of [...graveKit, ...cityKit]) {
+      await this.loadKitModel(p);
+      tick();
+    }
   }
 
   // ---------- arenas ----------
 
-  setMap(map: MapKey) {
-    this.map = map;
+  // ---------- arenas (real kits: Kenney graveyard, poly.pizza city) ----------
+
+  private kit(path: string): THREE.Object3D | null {
+    const t = this.kitCache.get(path);
+    return t ? t.clone() : null;
+  }
+
+  private placeKit(path: string, x: number, z: number, opts: { y?: number; yaw?: number; scale?: number; tilt?: number } = {}) {
+    const m = this.kit(path);
+    if (!m) return null;
+    m.position.set(x, opts.y ?? 0, z);
+    m.rotation.y = opts.yaw ?? 0;
+    if (opts.tilt) m.rotation.z = opts.tilt;
+    if (opts.scale) m.scale.setScalar(opts.scale);
+    this.arenaGroup.add(m);
+    return m;
+  }
+
+  private segWidth(path: string): number {
+    const t = this.kitCache.get(path);
+    if (!t) return 2;
+    const b = new THREE.Box3().setFromObject(t);
+    const s = b.getSize(new THREE.Vector3());
+    return Math.max(0.5, s.x, s.z);
+  }
+
+  setMap(map: MapKey, obstacles: Obstacle[]) {
     this.arenaGroup.clear();
     this.flickerLights = [];
+    // deterministic scatter
+    let seed = map === "graveyard" ? 777 : 4242;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
     const isGrave = map === "graveyard";
+    this.scene.background = new THREE.Color(isGrave ? 0x0a1424 : 0x0b0d12);
+    if (this.scene.fog instanceof THREE.Fog) {
+      this.scene.fog.color.set(isGrave ? 0x14202e : 0x0d1118);
+      this.scene.fog.near = 8;
+      this.scene.fog.far = this.isTouch ? 34 : 52;
+    }
 
     const groundTex = groundTexture(map);
     groundTex.repeat.set(12, 12);
@@ -268,222 +355,231 @@ export class World {
     this.arenaGroup.add(ground);
 
     if (isGrave) {
-      // moon-green tint ground fog handled by scene fog
-      const stoneMat = new THREE.MeshLambertMaterial({ color: 0x5c665f });
-      const woodMat = new THREE.MeshLambertMaterial({ color: 0x2e2419 });
-      // tombstones at obstacle positions (first 14 obstacles)
-      for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2;
-        const r = 10 + (i % 5) * 3;
-        const stone = new THREE.Group();
-        const slab = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.0, 0.18), stoneMat);
-        slab.position.y = 0.5;
-        const top = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.25, 0.18), stoneMat);
-        top.position.y = 1.05; top.rotation.z = 0.15;
-        stone.add(slab, top);
-        stone.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-        stone.rotation.y = Math.random() * 0.6 - 0.3;
-        stone.rotation.z = (Math.random() - 0.5) * 0.15;
-        this.arenaGroup.add(stone);
+      // --- GRAVEYARD (Kenney kit): tombstones + dead trees ON the colliders ---
+      const stones = ["graveyard/gstone-cross.glb", "graveyard/gstone-round.glb", "graveyard/gstone-broken.glb", "graveyard/gstone-wide.glb"];
+      const trees = ["graveyard/deadtree.glb", "graveyard/deadtree-long.glb"];
+      for (let i = 0; i < Math.min(14, obstacles.length); i++) {
+        const o = obstacles[i];
+        this.placeKit(stones[i % stones.length], o.x, o.z, {
+          yaw: rnd() * Math.PI * 2,
+          scale: 0.9 + rnd() * 0.3,
+          tilt: (rnd() - 0.5) * 0.14,
+        });
       }
-      // dead trees
-      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x1f1811 });
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2 + 0.3;
-        const r = 20 + (i % 3) * 3;
-        const tree = new THREE.Group();
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 3.4, 5), trunkMat);
-        trunk.position.y = 1.7;
-        tree.add(trunk);
-        for (let b = 0; b < 3; b++) {
-          const br = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.09, 1.6, 4), trunkMat);
-          br.position.set((Math.random() - 0.5) * 1.2, 2.4 + b * 0.4, (Math.random() - 0.5) * 1.2);
-          br.rotation.z = 0.7 + Math.random() * 0.5;
-          tree.add(br);
-        }
-        tree.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-        this.arenaGroup.add(tree);
+      for (let i = 14; i < Math.min(20, obstacles.length); i++) {
+        const o = obstacles[i];
+        this.placeKit(trees[(i - 14) % trees.length], o.x, o.z, {
+          yaw: rnd() * Math.PI * 2,
+          scale: 1.0 + rnd() * 0.5,
+        });
       }
-      // fence ring
-      for (let i = 0; i < 26; i++) {
-        const a = (i / 26) * Math.PI * 2;
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.1, 0.14), woodMat);
-        post.position.set(Math.cos(a) * 27.5, 0.55, Math.sin(a) * 27.5);
-        this.arenaGroup.add(post);
+      // decorative: crypt landmark at the north edge, coffins, grave plots, crosses
+      this.placeKit("graveyard/crypt.glb", 0, -24.5, { yaw: Math.PI, scale: 1.2 });
+      this.placeKit("graveyard/coffin.glb", 9, 14, { yaw: 0.7, tilt: 0.1 });
+      this.placeKit("graveyard/coffin.glb", -11, -3, { yaw: 2.4 });
+      for (let i = 0; i < 10; i++) {
+        const a = rnd() * Math.PI * 2, r = 6 + rnd() * 19;
+        this.placeKit("graveyard/graveplot.glb", Math.cos(a) * r, Math.sin(a) * r, { yaw: rnd() * Math.PI * 2 });
       }
-      // 2 flickering lantern lights
-      for (const [lx, lz] of [[6, -7], [-8, 6]] as const) {
-        const l = new THREE.PointLight(0xff9a4d, 14, 16, 1.9);
-        l.position.set(lx, 2.2, lz);
+      for (let i = 0; i < 5; i++) {
+        const a = rnd() * Math.PI * 2, r = 8 + rnd() * 16;
+        this.placeKit("graveyard/crosswood.glb", Math.cos(a) * r, Math.sin(a) * r, { yaw: rnd() * Math.PI, tilt: (rnd() - 0.5) * 0.2 });
+      }
+      // iron fence ring at the arena boundary (segment count from real width)
+      const segW = this.segWidth("graveyard/fence-iron.glb");
+      const ringR = 27.6;
+      const n = Math.max(24, Math.ceil((Math.PI * 2 * ringR) / segW));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        this.placeKit("graveyard/fence-iron.glb", Math.cos(a) * ringR, Math.sin(a) * ringR, { yaw: -a + Math.PI / 2 });
+      }
+      // gate on the south side
+      this.placeKit("graveyard/gate.glb", 0, 27.6, { yaw: Math.PI });
+      // warm lantern lights (the readable warm accents in the cold moonlight)
+      for (const [lx, lz] of [[6, -7], [-8, 6], [2, 13]] as const) {
+        this.placeKit("graveyard/lantern.glb", lx, lz, { scale: 1.4 });
+        const l = new THREE.PointLight(0xff9a4d, 40, 20, 1.8);
+        l.position.set(lx, 2.0, lz);
+        l.userData.base = 40;
         this.arenaGroup.add(l);
         this.flickerLights.push(l);
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.2, 5), woodMat);
-        pole.position.set(lx, 1.1, lz);
-        this.arenaGroup.add(pole);
       }
     } else {
-      // CITY
-      const bTex = buildingTexture();
-      const winMat = new THREE.MeshLambertMaterial({ map: bTex, emissive: 0xff9a4d, emissiveMap: bTex, emissiveIntensity: 0.55 });
-      const darkMat = new THREE.MeshLambertMaterial({ color: 0x11151b });
+      // --- CITY (poly.pizza City Pack): buildings on the 6 blocks, cars on the 5 randoms ---
       const blocks: Array<[number, number]> = [[-16, -16], [16, -16], [-16, 16], [16, 16], [0, -20], [0, 20]];
-      for (const [bx, bz] of blocks) {
-        const h = 9 + (Math.abs(bx * 7 + bz * 3) % 6);
-        const b = new THREE.Mesh(new THREE.BoxGeometry(8, h, 8), winMat);
-        b.position.set(bx, h / 2, bz);
-        this.arenaGroup.add(b);
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.3, 8.4), darkMat);
-        roof.position.set(bx, h + 0.15, bz);
-        this.arenaGroup.add(roof);
-      }
-      // roads
-      const roadMat = new THREE.MeshLambertMaterial({ color: 0x0c0e11 });
+      // scales chosen so each building's footprint half-diagonal ≈ collider r (5.2):
+      // building 4.6x3.9 (diag 6.0), large1 2.3x1.8 (diag 2.9), large2 2.0x1.2 (diag 2.3)
+      const bModels: Array<[string, number]> = [
+        ["city/building.glb", 1.8], ["city/large1.glb", 3.7], ["city/large2.glb", 4.6],
+      ];
+      blocks.forEach(([bx, bz], i) => {
+        const [mpath, mscale] = bModels[i % bModels.length];
+        const b = this.placeKit(mpath, bx, bz, { yaw: (i % 4) * Math.PI / 2, scale: mscale * (0.92 + (i % 3) * 0.08) });
+        // subtle per-building tint variation so reused models don't look cloned
+        if (b) {
+          const tint = 0.85 + ((i * 37) % 20) / 100;
+          b.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (mesh.isMesh) {
+              const m2 = mesh.material as THREE.MeshStandardMaterial;
+              if (m2 && "color" in m2) { mesh.material = m2.clone(); (mesh.material as THREE.MeshStandardMaterial).color.multiplyScalar(tint); }
+            }
+          });
+        }
+      });
+      // roads (procedural planes with lane markings — cheap and crisp)
+      const roadTex = pixelTexture((g, w, h) => {
+        g.fillStyle = "#161a20"; g.fillRect(0, 0, w, h);
+        g.fillStyle = "#c8b04a";
+        for (let y = 0; y < h; y += 16) g.fillRect(w / 2 - 1, y, 2, 8);
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = "#101318";
+          g.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 2);
+        }
+      });
+      roadTex.repeat.set(8, 1);
+      const roadMat = new THREE.MeshLambertMaterial({ map: roadTex });
       for (const z of [-8, 8]) {
         const road = new THREE.Mesh(new THREE.PlaneGeometry(64, 5), roadMat);
-        road.rotation.x = -Math.PI / 2; road.position.set(0, 0.01, z);
+        road.rotation.x = -Math.PI / 2; road.position.set(0, 0.02, z);
         this.arenaGroup.add(road);
       }
       for (const x of [-8, 8]) {
-        const road = new THREE.Mesh(new THREE.PlaneGeometry(5, 64), roadMat);
-        road.rotation.x = -Math.PI / 2; road.position.set(x, 0.01, 0);
+        const road = new THREE.Mesh(new THREE.PlaneGeometry(5, 64), roadMat.clone());
+        (road.material as THREE.MeshLambertMaterial).map = roadTex.clone();
+        ((road.material as THREE.MeshLambertMaterial).map as THREE.Texture).repeat.set(1, 8);
+        ((road.material as THREE.MeshLambertMaterial).map as THREE.Texture).needsUpdate = true;
+        road.rotation.x = -Math.PI / 2; road.position.set(x, 0.02, 0);
         this.arenaGroup.add(road);
       }
-      // wrecked cars (cover, r=1.3 obstacles)
-      const carColors = [0x7a2e2e, 0x2e5a7a, 0x6a6a2e, 0x3a3a44, 0x5a2e6a];
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 5) * Math.PI * 2 + 0.5;
-        const r = 11 + (i % 3) * 4;
-        const car = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.7, 4.4),
-          new THREE.MeshLambertMaterial({ color: carColors[i % carColors.length] }));
-        body.position.y = 0.65;
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, 2.0), darkMat);
-        cabin.position.set(0, 1.2, -0.2);
-        car.add(body, cabin);
-        for (const [wx, wz] of [[-0.95, 1.4], [0.95, 1.4], [-0.95, -1.4], [0.95, -1.4]] as const) {
-          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.3, 8),
-            new THREE.MeshLambertMaterial({ color: 0x0a0a0a }));
-          wheel.rotation.z = Math.PI / 2;
-          wheel.position.set(wx, 0.38, wz);
-          car.add(wheel);
-        }
-        car.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-        car.rotation.y = a + 1.2;
-        if (i % 2) car.rotation.z = 0.12; // wrecked tilt
-        this.arenaGroup.add(car);
+      // wrecked cars on the random obstacles (colliders r=1.3)
+      const cars = ["city/car.glb", "city/suv.glb", "city/policecar.glb"];
+      for (let i = 6; i < Math.min(11, obstacles.length); i++) {
+        const o = obstacles[i];
+        this.placeKit(cars[(i - 6) % cars.length], o.x, o.z, {
+          yaw: rnd() * Math.PI * 2,
+          tilt: i % 2 ? 0.1 : 0,
+          scale: 1.0,
+        });
       }
-      // flickering streetlights
-      for (const [lx, lz] of [[-8, -8], [8, 8], [-8, 8]] as const) {
-        const l = new THREE.PointLight(0xffd9a0, 18, 22, 1.8);
-        l.position.set(lx, 5.5, lz);
+      // traffic lights doubling as sodium street lamps + warm point lights
+      const lampPos: Array<[number, number]> = [[-8, -8], [8, 8], [-8, 8], [8, -8]];
+      for (const [lx, lz] of lampPos) {
+        this.placeKit("city/trafficlight.glb", lx, lz, { yaw: Math.atan2(-lx, -lz), scale: 1.6 });
+        const l = new THREE.PointLight(0xffc37a, 34, 22, 1.8);
+        l.position.set(lx, 5.2, lz);
+        l.userData.base = 34;
         this.arenaGroup.add(l);
         this.flickerLights.push(l);
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 5.5, 6), darkMat);
-        pole.position.set(lx, 2.75, lz);
-        this.arenaGroup.add(pole);
       }
     }
   }
 
   // ---------- view models ----------
 
+  // ---------- view models ----------
+  // The J-Toastie rigs are modeled at a giant scale with the gun lying along
+  // +X. Normalize: uniform scale so the gun reads at real size, rotate the
+  // long axis onto -Z (forward), then seat the grip at the anchor point.
+
   private gunGroups = new Map<WeaponKey | "melee", THREE.Group>();
 
-  private buildViewModels(scenes: Map<string, THREE.Object3D>) {
-    this.gunRig.position.set(0.28, -0.26, -0.55);
-    this.gunRig.rotation.y = -0.04;
+  private normalizeRig(scene: THREE.Object3D, targetLen: number, rotY: number, anchor: THREE.Vector3): THREE.Group {
+    const g = new THREE.Group();
+    const inner = new THREE.Group();
+    inner.add(scene.clone(true)); // clone: the cached template may be normalized more than once (arms)
+    // measure AFTER a first pass at unit scale
+    const box = new THREE.Box3().setFromObject(inner);
+    const size = box.getSize(new THREE.Vector3());
+    const longest = Math.max(size.x, size.y, size.z);
+    const s = longest > 0.001 ? targetLen / longest : 1;
+    inner.scale.setScalar(s);
+    inner.rotation.y = rotY;
+    // re-measure with rotation applied, then seat bbox center on the anchor
+    const box2 = new THREE.Box3().setFromObject(inner);
+    const c = box2.getCenter(new THREE.Vector3());
+    inner.position.sub(c).add(anchor);
+    g.add(inner);
+    return g;
+  }
 
-    const addRigged = (key: WeaponKey | "melee", scene: THREE.Object3D | undefined, animKey: string, pos: [number, number, number], scale: number, rotY = 0) => {
-      const g = new THREE.Group();
-      if (scene) {
-        scene.position.set(...pos);
-        scene.scale.setScalar(scale);
-        scene.rotation.y = rotY;
-        g.add(scene);
-        const clips = this.gunClips.get(animKey) ?? [];
-        if (clips.length) {
-          const mixer = new THREE.AnimationMixer(scene);
-          const idle = clips.find((c) => /idle/i.test(c.name));
-          if (idle) { mixer.clipAction(idle).play(); }
+  private buildViewModels(scenes: Map<string, THREE.Object3D>) {
+    // anchors are gunRig-local; gunRig itself sits at (0.28,-0.26,-0.55),
+    // so this lands the gun center at camera-space ~(0.30,-0.30,-0.72)
+    const anchor = new THREE.Vector3(0.02, -0.04, -0.17);
+    const show = (key: WeaponKey | "melee", g: THREE.Group | null, animKey: string) => {
+      const grp = g ?? new THREE.Group();
+      if (!g) grp.add(this.proceduralGun(key));
+      // hook up idle animation if the rig has one
+      const clips = this.gunClips.get(animKey) ?? [];
+      if (clips.length && g) {
+        const idle = clips.find((c) => /idle/i.test(c.name));
+        if (idle) {
+          const mixer = new THREE.AnimationMixer(grp);
+          mixer.clipAction(idle).play();
           this.gunMixers.push(mixer);
           this.gunClips.set(key, clips);
         }
-      } else {
-        // procedural fallback: blocky gun
-        g.add(this.proceduralGun(key));
       }
-      g.visible = false;
-      this.gunRig.add(g);
-      this.gunGroups.set(key, g);
+      grp.visible = false;
+      this.gunRig.add(grp);
+      this.gunGroups.set(key, grp);
     };
 
-    // rifle: full animated AKM rig
-    addRigged("rifle", scenes.get("rifle"), "rifle", [0, 0, 0], 1);
-    // pistol: animated Glock rig
-    addRigged("pistol", scenes.get("pistol"), "pistol", [0, 0, 0], 1);
-    // shotgun + smg: static arms + gun in right hand
-    const armsS = scenes.get("arms");
-    const shotgunGun = scenes.get("shotgun");
-    if (armsS && shotgunGun) {
-      const g = new THREE.Group();
-      g.add(armsS);
-      const hand = this.findBone(armsS, "Hand.R");
-      if (hand) {
-        shotgunGun.position.set(0, -0.02, 0.05);
-        shotgunGun.rotation.set(0, Math.PI / 2, 0);
-        shotgunGun.scale.setScalar(1.4);
-        hand.add(shotgunGun);
-      } else {
-        shotgunGun.position.set(0.1, 0, -0.3);
-        g.add(shotgunGun);
-      }
-      g.visible = false;
-      this.gunRig.add(g);
-      this.gunGroups.set("shotgun", g);
+    const ROT_FWD = Math.PI / 2; // +X -> -Z (muzzle guess; verified visually)
+
+    // rifle: full animated AKM rig (arms come along at correct relative scale)
+    const rifleS = scenes.get("rifle");
+    show("rifle", rifleS ? this.normalizeRig(rifleS, 0.82, ROT_FWD, anchor) : null, "rifle");
+
+    // pistol: full animated Glock rig
+    const pistolS = scenes.get("pistol");
+    show("pistol", pistolS ? this.normalizeRig(pistolS, 0.34, ROT_FWD, anchor.clone().add(new THREE.Vector3(-0.02, 0.02, 0.1))) : null, "pistol");
+
+    // shotgun: Mossberg mesh only — the separate arms rig is T-posed wide and
+    // does not read as holding the gun, so the gun stands alone (DOOM-style).
+    const shotgunS = scenes.get("shotgun");
+    if (shotgunS) {
+      show("shotgun", this.normalizeRig(shotgunS, 0.85, ROT_FWD, anchor), "shotgun");
     } else {
-      addRigged("shotgun", undefined, "", [0, 0, 0], 1);
+      show("shotgun", null, "");
     }
-    // smg: arms + procedural blocky smg
-    if (armsS) {
+
+    // smg: procedural blocky smg seated at the anchor, no arms
+    {
       const g = new THREE.Group();
-      const armsClone = armsS.clone(true);
-      g.add(armsClone);
-      const hand = this.findBone(armsClone, "Hand.R");
       const smg = this.proceduralGun("smg");
-      smg.scale.setScalar(0.8);
-      if (hand) { smg.position.set(0, 0, 0.1); hand.add(smg); }
-      else { smg.position.set(0.1, 0, -0.3); g.add(smg); }
-      g.visible = false;
-      this.gunRig.add(g);
-      this.gunGroups.set("smg", g);
-    } else {
-      addRigged("smg", undefined, "", [0, 0, 0], 1);
+      const box = new THREE.Box3().setFromObject(smg);
+      const c = box.getCenter(new THREE.Vector3());
+      smg.position.sub(c).add(anchor);
+      g.add(smg);
+      show("smg", g, "smg");
     }
-    // melee: knife in right hand
+
+    // melee: knife mesh only, angled like a held blade
     const knifeS = scenes.get("knife");
-    if (armsS && knifeS) {
+    if (knifeS) {
       const g = new THREE.Group();
-      const armsClone = armsS.clone(true);
-      g.add(armsClone);
-      const hand = this.findBone(armsClone, "Hand.R");
-      if (hand) { knifeS.position.set(0, 0, 0.08); knifeS.scale.setScalar(1.6); hand.add(knifeS); }
-      else { knifeS.position.set(0.15, 0, -0.3); g.add(knifeS); }
-      g.visible = false;
-      this.gunRig.add(g);
-      this.gunGroups.set("melee", g);
+      // knife is modeled blade-up (+Y); lay it forward-down
+      const inner = new THREE.Group();
+      inner.add(knifeS);
+      const box = new THREE.Box3().setFromObject(inner);
+      const size = box.getSize(new THREE.Vector3());
+      const s = 0.42 / Math.max(size.x, size.y, size.z);
+      inner.scale.setScalar(s);
+      inner.rotation.x = -Math.PI / 2 + 0.35;
+      const box2 = new THREE.Box3().setFromObject(inner);
+      const c = box2.getCenter(new THREE.Vector3());
+      inner.position.sub(c).add(anchor.clone().add(new THREE.Vector3(0.03, -0.02, 0.12)));
+      g.add(inner);
+      show("melee", g, "knife");
     } else {
-      addRigged("melee", undefined, "", [0, 0, 0], 1);
+      show("melee", null, "");
     }
 
-    // muzzle flash anchor
-    this.muzzleFlash.position.set(0.28, -0.1, -1.1);
-    this.muzzleLight.position.set(0.28, -0.1, -1.2);
-  }
-
-  private findBone(root: THREE.Object3D, name: string): THREE.Object3D | null {
-    let found: THREE.Object3D | null = null;
-    root.traverse((o) => { if (o.name === name && !found) found = o; });
-    return found;
+    // muzzle flash anchor just ahead of the anchor point
+    this.muzzleFlash.position.set(0.30, -0.22, -1.35);
+    this.muzzleLight.position.set(0.30, -0.22, -1.45);
   }
 
   private proceduralGun(key: WeaponKey | "melee"): THREE.Group {
@@ -571,6 +667,16 @@ export class World {
       let mixer: THREE.AnimationMixer;
       if (tpl) {
         const obj = SkeletonUtils.clone(tpl);
+        // Clone materials per enemy: the cached template's materials are
+        // shared, and the zombie tint below multiplies color — without this
+        // every spawn darkened ALL zombies until they were black blobs.
+        obj.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh) {
+            const m = mesh.material as THREE.Material | THREE.Material[];
+            mesh.material = Array.isArray(m) ? m.map((x) => x.clone()) : m.clone();
+          }
+        });
         group.add(obj);
         clips = this.modelClips(altKey ?? e.kind);
         mixer = new THREE.AnimationMixer(obj);
@@ -679,7 +785,7 @@ export class World {
     flash.opacity = 1;
     this.muzzleFlash.scale.setScalar(0.7 + Math.random() * 0.6);
     this.muzzleFlash.rotation.z = Math.random() * Math.PI;
-    this.muzzleLight.intensity = weapon === "shotgun" ? 60 : 34;
+    this.muzzleLight.intensity = weapon === "shotgun" ? 130 : weapon === "rifle" ? 95 : 70;
     this.shake = Math.min(this.shake + (weapon === "shotgun" ? 0.35 : weapon === "rifle" ? 0.28 : 0.14), 1);
   }
 
@@ -740,11 +846,11 @@ export class World {
       if (this.hiT > 10) { this.quality--; this.hiT = 0; this.applyQuality(); }
     } else this.hiT = 0;
 
-    // flickering lights
+    // flickering lights (base intensity stored per light at creation)
     const q = this.quality;
     for (let i = 0; i < this.flickerLights.length; i++) {
       const l = this.flickerLights[i];
-      const base = this.map === "graveyard" ? 14 : 18;
+      const base = (l.userData.base as number) ?? 20;
       l.intensity = q === 2 && i > 0 ? 0 : base * (0.82 + Math.random() * 0.28);
     }
 
@@ -862,8 +968,8 @@ export class World {
 
     // muzzle flash decay
     const flash = this.muzzleFlash.material as THREE.MeshBasicMaterial;
-    flash.opacity = Math.max(0, flash.opacity - dt * 22);
-    this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 900);
+    flash.opacity = Math.max(0, flash.opacity - dt * 13);
+    this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 420);
 
     // particles
     this.particles.update(dt);

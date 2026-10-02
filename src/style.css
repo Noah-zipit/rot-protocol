@@ -14,7 +14,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
-  width: 100%; height: 100%;
+  width: 100%; height: 100dvh;
   overflow: hidden;
   background: #05080a;
   font-family: "Press Start 2P", monospace;
@@ -22,9 +22,13 @@ html, body {
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: none;
+  overscroll-behavior: none;
 }
 
-#app { position: fixed; inset: 0; }
+/* fixed body: mobile URL bar show/hide must never resize or shift the game */
+body { position: fixed; inset: 0; }
+
+#app { position: fixed; inset: 0; height: 100dvh; }
 
 #game-canvas {
   position: absolute; inset: 0;
@@ -41,11 +45,26 @@ html, body {
 .screen {
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 18px; padding: 24px;
+  align-items: center; justify-content: safe center;
+  gap: 18px;
+  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   background: rgba(5, 8, 10, 0.88);
   text-align: center;
   z-index: 20;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* short viewports (phones): nothing may clip — shrink, don't cut */
+@media (max-height: 720px) {
+  .game-title { font-size: clamp(30px, 8vh, 52px); }
+  .screen { gap: 10px; }
+  .screen h2 { font-size: clamp(18px, 5vh, 30px); }
+  .btn { padding: 12px 22px; }
+  .map-card { padding: 10px 14px; min-width: 128px; }
+  #loadout-grid { grid-template-columns: repeat(2, minmax(140px, 200px)); gap: 8px; }
+  .weapon-card { padding: 10px 8px; gap: 6px; }
+  .credits { font-size: 7px; }
 }
 
 .game-title {
@@ -157,7 +176,7 @@ html, body {
 @keyframes hitpop { 0% { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(1.4); } 100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(0.8); } }
 
 #health-wrap {
-  position: absolute; left: 18px; bottom: 18px;
+  position: absolute; left: calc(18px + env(safe-area-inset-left)); bottom: calc(18px + env(safe-area-inset-bottom));
   width: min(300px, 34vw); height: 26px;
   background: #101512; border: 2px solid #2a352e;
 }
@@ -166,7 +185,7 @@ html, body {
 #health-num { position: absolute; right: 8px; top: 5px; font-size: 10px; color: #fff; text-shadow: 1px 1px 0 #000; }
 
 #ammo-wrap {
-  position: absolute; right: 18px; bottom: 18px;
+  position: absolute; right: calc(18px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom));
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
 }
 #weapon-name { font-size: 10px; color: var(--dim); }
@@ -174,14 +193,14 @@ html, body {
 #ammo.reloading { color: var(--amber); }
 
 #wave-wrap {
-  position: absolute; left: 18px; top: 16px;
+  position: absolute; left: calc(18px + env(safe-area-inset-left)); top: calc(16px + env(safe-area-inset-top));
   display: flex; flex-direction: column; gap: 6px;
 }
 #wave-label { font-size: 13px; color: var(--amber); text-shadow: 2px 2px 0 #000; }
 #zombies-left { font-size: 9px; color: var(--dim); }
 
 #score-wrap {
-  position: absolute; right: 18px; top: 16px;
+  position: absolute; right: calc(18px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top));
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
 }
 #score { font-size: 11px; color: var(--ink); }
@@ -244,7 +263,7 @@ html, body {
 #touch-ui { position: absolute; inset: 0; z-index: 15; pointer-events: none; }
 
 #joystick {
-  position: absolute; left: 26px; bottom: 70px;
+  position: absolute; left: calc(26px + env(safe-area-inset-left)); bottom: calc(70px + env(safe-area-inset-bottom));
   width: 120px; height: 120px;
   border: 2px solid rgba(232, 240, 228, 0.35);
   border-radius: 50%;
@@ -272,21 +291,21 @@ html, body {
 }
 .tbtn:active, .tbtn.on { background: rgba(88, 201, 107, 0.4); border-color: var(--green); }
 .tbtn-fire {
-  right: 26px; bottom: 70px;
+  right: calc(26px + env(safe-area-inset-right)); bottom: calc(70px + env(safe-area-inset-bottom));
   width: 92px; height: 92px;
   font-size: 11px;
   border-color: rgba(224, 72, 58, 0.7);
 }
 .tbtn-fire:active { background: rgba(224, 72, 58, 0.45); }
-#btn-slide { right: 132px; bottom: 66px; }
-#btn-jump { right: 40px; bottom: 178px; }
-#btn-reload { right: 132px; bottom: 150px; }
-#btn-swap { right: 206px; bottom: 130px; }
-#btn-melee { right: 206px; bottom: 52px; }
-#btn-sprint { left: 170px; bottom: 76px; }
+#btn-slide { right: calc(132px + env(safe-area-inset-right)); bottom: calc(66px + env(safe-area-inset-bottom)); }
+#btn-jump { right: calc(40px + env(safe-area-inset-right)); bottom: calc(178px + env(safe-area-inset-bottom)); }
+#btn-reload { right: calc(132px + env(safe-area-inset-right)); bottom: calc(150px + env(safe-area-inset-bottom)); }
+#btn-swap { right: calc(206px + env(safe-area-inset-right)); bottom: calc(130px + env(safe-area-inset-bottom)); }
+#btn-melee { right: calc(206px + env(safe-area-inset-right)); bottom: calc(52px + env(safe-area-inset-bottom)); }
+#btn-sprint { left: calc(170px + env(safe-area-inset-left)); bottom: calc(76px + env(safe-area-inset-bottom)); }
 .tbtn-small { width: 44px; height: 44px; font-size: 7px; }
-#btn-pause-t { right: 18px; top: 76px; }
-#btn-mute { right: 72px; top: 76px; }
+#btn-pause-t { right: calc(18px + env(safe-area-inset-right)); top: calc(76px + env(safe-area-inset-top)); }
+#btn-mute { right: calc(72px + env(safe-area-inset-right)); top: calc(76px + env(safe-area-inset-top)); }
 
 /* keep HUD clear of touch buttons */
 @media (pointer: coarse) {

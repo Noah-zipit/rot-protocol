@@ -92,7 +92,8 @@ systems; spawn points and cover layouts are tuned per map.
 | Shotgun (Mossberg 590A1) | Poly Pizza, by J-Toastie | CC-BY (credit J-Toastie) |
 | Melee (Combat Knife) | Poly Pizza, by J-Toastie | CC-BY (credit J-Toastie) |
 | SMG | Procedural blocky SMG in code (matches J-Toastie style) | own |
-| Environment | Procedural in code (graveyard + city) | own |
+| Environment: Graveyard | Kenney "Graveyard Kit" (14 pieces) | CC0 (credit Kenney in README + in-game credits line) |
+| Environment: City | Poly Pizza "City Pack" by dreamdev — 9 models by Quaternius, Kenney, Kay Lousberg | CC0 (credit all three in README + in-game credits line) |
 | Audio | 100% procedural WebAudio (gunshots, reloads, groans, hits, wave horn, boss roars). Mute: M | own |
 
 Total game weight target: under ~12MB.

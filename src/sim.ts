@@ -907,6 +907,24 @@ export function testBuildWave() {
   return out;
 }
 
+/** Debug only: stage a few enemies in front of the player for visual checks.
+ *  Used by ?artcheck=<map> screenshot runs. Not part of gameplay. */
+export function debugStage(s: GameState) {
+  s.wave = 1;
+  s.waveState = "active";
+  s.spawnQueue = [];
+  const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker"];
+  const xs = [-4.5, -2, 0.5, 3, -3.5];
+  kinds.forEach((k, i) => {
+    const e = spawnEnemy(s, k);
+    e.pos.x = xs[i];
+    e.pos.z = -7 - i * 1.2;
+    e.state = "seek";
+    e.stateT = 0;
+    if (ENEMIES[k].flying) e.pos.y = 2.4;
+  });
+}
+
 /** Debug only: kill everything damageable. Used by headless logic tests. */
 export function debugKillAll(s: GameState) {
   for (const e of [...s.enemies]) {

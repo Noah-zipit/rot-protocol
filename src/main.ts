@@ -4,7 +4,7 @@
  */
 import "@fontsource/press-start-2p/index.css";
 import "./style.css";
-import { createGame, startRun, stepSim, FIXED_DT, ENEMIES, IS_BOSS, type GameState, type GameEvent, type WeaponKey } from "./sim";
+import { createGame, startRun, stepSim, debugStage, FIXED_DT, ENEMIES, IS_BOSS, type GameState, type GameEvent, type WeaponKey } from "./sim";
 import { InputManager, isTouchDevice } from "./input";
 import { GameAudio } from "./audio";
 import { World } from "./world";
@@ -39,7 +39,18 @@ class Game {
       // models failed; world has procedural fallbacks
     }
     this.wireUI();
+    // keep the render buffer matched to the real visible screen
+    const onResize = () => this.world?.fitViewport();
+    window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
     this.ui.show("title");
+    // ?artcheck=<graveyard|city>: test-only auto-run with staged enemies for screenshots
+    const art = new URLSearchParams(location.search).get("artcheck");
+    if (art === "graveyard" || art === "city") {
+      this.ui.selectedMap = art;
+      this.startRun(["pistol", "shotgun"]);
+      if (this.sim) debugStage(this.sim);
+    }
     this.lastT = performance.now();
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -75,14 +86,14 @@ class Game {
     });
   }
 
-  private startRun() {
+  private startRun(loadout?: WeaponKey[]) {
     const map = this.ui.selectedMap;
-    const loadout = this.ui.selectedWeapons.length === 2 ? [...this.ui.selectedWeapons] : (["pistol", "shotgun"] as WeaponKey[]);
+    const lo = loadout ?? (this.ui.selectedWeapons.length === 2 ? [...this.ui.selectedWeapons] : (["pistol", "shotgun"] as WeaponKey[]));
     this.sim = createGame(map, isTouchDevice);
-    startRun(this.sim, loadout);
-    this.world!.setMap(map);
+    startRun(this.sim, lo);
+    this.world!.setMap(map, this.sim.obstacles);
     this.world!.clearEnemies();
-    this.world!.setGun(loadout[0]);
+    this.world!.setGun(lo[0]);
     this.paused = false;
     this.ui.show("playing");
     if (!isTouchDevice) this.input.lockPointer();
