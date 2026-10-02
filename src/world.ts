@@ -151,6 +151,12 @@ export class World {
   private modelCache = new Map<EnemyKind, THREE.Object3D>();
   private altModels = new Map<string, THREE.Object3D>();
   private modelClipsMap = new Map<string, THREE.AnimationClip[]>();
+  // Unit-scale Box3 height of each enemy template, measured once at load.
+  // View scale is derived from the sim hitbox height (d.height / unitH) so
+  // visuals always match hit detection by construction — the old fixed
+  // d.scale made bosses render far larger than their hitboxes, forcing
+  // players to aim at legs to register hits.
+  private unitHeights = new Map<string, number>();
   private arenaGroup = new THREE.Group();
   private particles: ParticlePool;
   private flickerLights: THREE.PointLight[] = [];
@@ -788,7 +794,12 @@ export class World {
       group.add(this.proceduralEnemy(kind));
       mixer = new THREE.AnimationMixer(group);
     }
-    group.scale.setScalar(d.scale);
+    // Scale the view from the sim hitbox height: measured unit-scale
+    // template height -> d.height, so the visual always matches the
+    // hitbox by construction. Falls back to the legacy fixed scale only
+    // when no template was measured (model failed to load).
+    const unitH = this.unitHeights.get(altKey ?? kind) ?? 0;
+    group.scale.setScalar(unitH > 0.001 ? d.height / unitH : d.scale);
     // tint sickly green for zombies
     if (kind === "shambler" || kind === "runner" || kind === "brute") {
       group.traverse((o) => {
@@ -828,10 +839,25 @@ export class World {
     return { group, mixer, clips, action: null, clipKey: "", dead: false, mats, baseOpacity, kind, variant };
   }
 
+  /** Measure each enemy template's unit-scale Box3 height once at load.
+   *  Same pattern as the gun-rig normalization: measure AFTER a first pass
+   *  at unit scale, before any view scaling is applied. */
+  private measureEnemyHeights() {
+    const measure = (key: string, obj: THREE.Object3D | undefined) => {
+      if (!obj) return;
+      const h = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).y;
+      if (h > 0.001) this.unitHeights.set(key, h);
+    };
+    const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker", "rotking", "ripper", "broodmother"];
+    for (const k of kinds) measure(k, this.modelCache.get(k));
+    measure("shamblerAlt", this.altModels.get("shamblerAlt"));
+  }
+
   /** Pre-warm every enemy type at load: build one pooled view per kind and
    *  force-compile all shader programs NOW, so the first real spawn of each
    *  type never hitches on program compilation or rig cloning. */
   private warmupEnemies() {
+    this.measureEnemyHeights();
     const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker", "rotking", "ripper", "broodmother"];
     const views: EnemyView[] = [];
     for (const k of kinds) {

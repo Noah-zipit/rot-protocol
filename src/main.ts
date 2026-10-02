@@ -28,6 +28,10 @@ class Game {
   private meleeReturnT = 0;
   private paused = false;
   private muted = false;
+  // desktop pointer-lock tracking: losing lock mid-run (or never acquiring
+  // it) leaves the player defenseless — auto-pause instead
+  private lockWasHeld = false;
+  private runStartT = 0;
 
   async boot() {
     this.ui.show("loading");
@@ -113,6 +117,8 @@ class Game {
     this.world!.clearEnemies();
     this.world!.setGun(lo[0]);
     this.paused = false;
+    this.lockWasHeld = false;
+    this.runStartT = performance.now();
     this.ui.show("playing");
     if (!isTouchDevice) this.input.lockPointer();
     this.ui.banner("PROTOCOL ACTIVE", "SURVIVE 10 WAVES");
@@ -147,6 +153,19 @@ class Game {
     if (this.sim && this.ui.screen === "playing" && !this.paused && !portraitBlocked) {
       // pause key (Esc / touch pause button)
       if (this.input.input.pausePressed) { this.togglePause(); this.input.endFrame(); return; }
+      // Desktop: pointer lock is the only way to look and shoot. If it is
+      // lost mid-run (Esc, alt-tab, denial) — or never acquired — the player
+      // is left defenseless while zombies keep coming. Auto-pause instead;
+      // resuming re-requests lock from the click gesture. A short grace at
+      // run start covers the async lock acquisition after DEPLOY.
+      if (!isTouchDevice && !this.sim.over && !this.sim.won) {
+        if (this.input.locked) this.lockWasHeld = true;
+        else if (this.lockWasHeld || performance.now() - this.runStartT > 5000) {
+          this.togglePause(true);
+          this.input.endFrame();
+          return;
+        }
+      }
       // fixed-timestep sim
       this.acc += dt;
       let n = 0;
@@ -185,7 +204,10 @@ class Game {
 
       // Desktop: prompt to (re)capture the mouse whenever the game is live
       // but pointer lock is not held — otherwise clicks silently do nothing.
-      this.ui.setLockOverlay(!this.input.locked);
+      // Never over the death/victory screens: the overlay would sit on top
+      // of TRY AGAIN and make retry unreachable.
+      const live = !this.sim.over && !this.sim.won;
+      this.ui.setLockOverlay(live && !this.input.locked);
     } else if (this.ui.screen === "pause" && this.sim) {
       // keep rendering frozen scene; still end frame to swallow edges
       this.input.endFrame();

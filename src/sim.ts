@@ -29,7 +29,7 @@ export interface WeaponDef {
 
 export const WEAPONS: Record<WeaponKey, WeaponDef> = {
   pistol:  { name: "PISTOL",  damage: 34, pellets: 1, mag: 12, reserve: -1,  rpm: 320, reloadTime: 1.1, spread: 0.012, range: 60,  pierce: false, kick: 0.028, desc: "Reliable sidearm. Infinite reserve." },
-  shotgun: { name: "SHOTGUN", damage: 13, pellets: 5, mag: 6,  reserve: 24,  rpm: 75,  reloadTime: 2.2, spread: 0.09,  range: 26,  pierce: false, kick: 0.09,  desc: "5-pellet spread. Tightens mid-slide." },
+  shotgun: { name: "SHOTGUN", damage: 16, pellets: 5, mag: 6,  reserve: 24,  rpm: 75,  reloadTime: 2.2, spread: 0.09,  range: 26,  pierce: false, kick: 0.09,  desc: "5-pellet spread. Tightens mid-slide." },
   smg:     { name: "SMG",     damage: 16, pellets: 1, mag: 32, reserve: 128, rpm: 800, reloadTime: 1.7, spread: 0.035, range: 42,  pierce: false, kick: 0.02,  desc: "Bullet hose. Low damage per round." },
   rifle:   { name: "RIFLE",   damage: 90, pellets: 1, mag: 5,  reserve: 20,  rpm: 55,  reloadTime: 2.5, spread: 0.004, range: 120, pierce: true,  kick: 0.07,  desc: "Slow, brutal, pierces the horde." },
 };
@@ -46,9 +46,9 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   brute:      { name: "BRUTE",        hp: 320,  speed: 1.5, damage: 30, attackRange: 2.1, windup: 0.6,  radius: 0.7,  height: 2.2,  score: 400,  scale: 1.25, gltf: "enemies/Zombie_Chubby.gltf" },
   rattler:    { name: "RATTLER",      hp: 30,   speed: 5.6, damage: 6,  attackRange: 1.5, windup: 0.3,  radius: 0.35, height: 1.7,  score: 175,  scale: 1.0,  gltf: "enemies/rattler.glb" },
   shrieker:   { name: "SHRIEKER",     hp: 45,   speed: 5.0, damage: 10, attackRange: 2.0, windup: 0.4,  radius: 0.5,  height: 0.9,  score: 200,  scale: 1.15, gltf: "enemies/shrieker.glb", flying: true },
-  rotking:    { name: "THE ROT KING", hp: 2600, speed: 1.2, damage: 25, attackRange: 3.4, windup: 0.8,  radius: 1.4,  height: 2.0,  score: 2500, scale: 3.5,  gltf: "enemies/rotking.glb" },
-  ripper:     { name: "THE RIPPER",   hp: 1700, speed: 3.4, damage: 30, attackRange: 2.2, windup: 0.5,  radius: 0.8,  height: 1.9,  score: 2000, scale: 1.55, gltf: "enemies/bluedemon.glb" },
-  broodmother:{ name: "THE BROODMOTHER", hp: 2200, speed: 0.9, damage: 20, attackRange: 2.8, windup: 0.9, radius: 1.2, height: 2.2, score: 2200, scale: 2.0, gltf: "enemies/giant.glb" },
+  rotking:    { name: "THE ROT KING", hp: 2600, speed: 1.2, damage: 25, attackRange: 3.4, windup: 0.8,  radius: 1.4,  height: 3.0,  score: 2500, scale: 3.5,  gltf: "enemies/rotking.glb" },
+  ripper:     { name: "THE RIPPER",   hp: 1700, speed: 3.4, damage: 30, attackRange: 2.2, windup: 0.5,  radius: 0.8,  height: 2.4,  score: 2000, scale: 1.55, gltf: "enemies/bluedemon.glb" },
+  broodmother:{ name: "THE BROODMOTHER", hp: 2200, speed: 0.9, damage: 20, attackRange: 2.8, windup: 0.9, radius: 1.2, height: 2.8, score: 2200, scale: 2.0, gltf: "enemies/giant.glb" },
 };
 
 export const ARENA_HALF = 28;
@@ -466,7 +466,8 @@ function swapTo(s: GameState, idx: number) {
   s.events.push({ t: "swap", weapon: p.loadout[idx].key });
 }
 
-function fireWeapon(s: GameState, w: WeaponState) {
+/** Exported for headless hit-registration tests (aim at torso height, assert a hit). */
+export function fireWeapon(s: GameState, w: WeaponState) {
   const p = s.player;
   const d = WEAPONS[w.key];
   w.mag--;
@@ -882,9 +883,11 @@ function updateWaves(s: GameState, dt: number) {
       // wave 1 trickles in slower: a few seconds of extra spawn grace
       s.spawnT = s.wave === 1 ? 1.1 : 0.7;
     }
-    // boss/finale trickle
+    // boss/finale trickle — only while the boss(es) stand; once they fall
+    // the wave is decided, so stop feeding minions
     const bossWave = s.wave === 3 || s.wave === 6 || s.wave === 9 || isFinale;
-    if (bossWave) {
+    const bossesStillUp = bossesAlive(s).length > 0;
+    if (bossWave && bossesStillUp) {
       s.trickleT -= dt;
       const cap = isFinale ? 8 : 5;
       if (s.trickleT <= 0 && alive < cap) {
@@ -902,16 +905,27 @@ function updateWaves(s: GameState, dt: number) {
         }
       }
     }
-    const bossesStillUp = bossesAlive(s).length > 0;
-    if (s.spawnQueue.length === 0 && alive === 0 && !bossesStillUp) {
-      if (isFinale) {
-        s.won = true;
-        s.events.push({ t: "victory" });
-      } else {
-        s.waveState = "breather";
-        s.waveT = 6;
-        s.events.push({ t: "waveClear" });
+    if (bossWave) {
+      // dev-only guard: a single-boss wave must never field 2+ bosses
+      if (import.meta.env.DEV && !isFinale && bossesAlive(s).length > 1) {
+        console.warn(`[rot] wave ${s.wave}: ${bossesAlive(s).length} bosses alive on a single-boss wave`);
       }
+      // boss waves clear the moment the boss(es) die — leftover trickle
+      // minions persist into the breather, which is fine
+      if (!bossesStillUp) {
+        if (isFinale) {
+          s.won = true;
+          s.events.push({ t: "victory" });
+        } else {
+          s.waveState = "breather";
+          s.waveT = 6;
+          s.events.push({ t: "waveClear" });
+        }
+      }
+    } else if (s.spawnQueue.length === 0 && alive === 0 && !bossesStillUp) {
+      s.waveState = "breather";
+      s.waveT = 6;
+      s.events.push({ t: "waveClear" });
     }
   }
 }
