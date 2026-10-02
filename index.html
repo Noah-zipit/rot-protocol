@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="description" content="ROT PROTOCOL — a pixel-art first-person zombie shooter. Containment failed. Survive the waves." />
+    <meta name="theme-color" content="#0b1210" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>ROT PROTOCOL — Pixel Zombie FPS</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div id="boss-bars"></div>
+        <div id="crosshair"><span class="ch-dot"></span><span class="ch-t"></span><span class="ch-b"></span><span class="ch-l"></span><span class="ch-r"></span></div>
+        <div id="hitmarker"></div>
+        <div id="health-wrap"><div id="health-bar"></div><span id="health-num">100</span></div>
+        <div id="ammo-wrap"><span id="weapon-name">PISTOL</span><span id="ammo">12 / INF</span></div>
+        <div id="wave-wrap"><span id="wave-label">STANDBY</span><span id="zombies-left">HOSTILES 0</span></div>
+        <div id="score-wrap"><span id="score">SCORE 0</span><span id="kills">KILLS 0</span></div>
+        <div id="banner" class="hidden"></div>
+        <div id="damage-vignette"></div>
+        <div id="slide-indicator" class="hidden">SLIDING</div>
+      </div>
+      <div id="popups"></div>
+
+      <!-- Touch controls -->
+      <div id="touch-ui" class="hidden">
+        <div id="joystick"><div id="joy-knob"></div></div>
+        <button id="btn-fire" class="tbtn tbtn-fire">FIRE</button>
+        <button id="btn-slide" class="tbtn">SLIDE</button>
+        <button id="btn-jump" class="tbtn">JUMP</button>
+        <button id="btn-reload" class="tbtn">RLD</button>
+        <button id="btn-swap" class="tbtn">1/2</button>
+        <button id="btn-melee" class="tbtn">MELEE</button>
+        <button id="btn-sprint" class="tbtn">SPRINT</button>
+        <button id="btn-pause-t" class="tbtn tbtn-small">II</button>
+        <button id="btn-mute" class="tbtn tbtn-small">SND</button>
+      </div>
+
+      <!-- Title screen -->
+      <div id="screen-title" class="screen hidden">
+        <h1 class="game-title">ROT<br />PROTOCOL</h1>
+        <p class="subtitle">CONTAINMENT FAILED. SURVIVE THE WAVES.</p>
+        <div id="map-select"></div>
+        <div id="controls-list" class="controls-hint hidden">
+          <span>WASD MOVE</span><span>MOUSE AIM</span><span>CLICK SHOOT</span><span>SHIFT SPRINT</span><span>C SLIDE</span><span>R RELOAD</span><span>1/2 WEAPONS</span><span>V MELEE</span><span>M MUTE</span><span>ESC PAUSE</span>
+        </div>
+        <p id="touch-note" class="hidden">LEFT STICK MOVE · DRAG RIGHT SIDE AIM · FIRE BUTTON SHOOTS</p>
+        <button id="btn-start" class="btn">ENTER THE ARENA</button>
+        <p class="credits">ZOMBIES + MONSTERS: QUATERNIUS (CC-BY/CC0) · GUNS: J-TOASTIE (CC-BY) · AUDIO: PROCEDURAL</p>
+      </div>
+
+      <!-- Loadout screen -->
+      <div id="screen-loadout" class="screen hidden">
+        <h2>PICK YOUR LOADOUT</h2>
+        <p class="subtitle">CHOOSE 2 PRIMARIES · MELEE ALWAYS READY</p>
+        <div id="loadout-grid"></div>
+        <button id="btn-deploy" class="btn" disabled>DEPLOY</button>
+      </div>
+
+      <!-- Pause screen -->
+      <div id="screen-pause" class="screen hidden">
+        <h2>PAUSED</h2>
+        <button id="btn-resume" class="btn">RESUME</button>
+        <button id="btn-quit" class="btn btn-dim">ABANDON RUN</button>
+      </div>
+
+      <!-- Game over screen -->
+      <div id="screen-over" class="screen hidden">
+        <h2 class="red">YOU DIED</h2>
+        <p class="subtitle">THE ROT TAKES ANOTHER</p>
+        <div id="final-stats" class="stats"></div>
+        <button id="btn-restart" class="btn">TRY AGAIN</button>
+      </div>
+
+      <!-- Victory screen -->
+      <div id="screen-victory" class="screen hidden">
+        <h2 class="green">CONTAINMENT RESTORED</h2>
+        <p class="subtitle">ALL 10 WAVES SURVIVED</p>
+        <div id="victory-stats" class="stats"></div>
+        <button id="btn-again" class="btn">PLAY AGAIN</button>
+      </div>
+
+      <div id="screen-loading" class="screen"><p id="loading-label">LOADING 0%</p></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
