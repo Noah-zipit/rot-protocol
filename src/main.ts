@@ -40,9 +40,14 @@ class Game {
     }
     this.wireUI();
     // keep the render buffer matched to the real visible screen
-    const onResize = () => this.world?.fitViewport();
+    const onResize = () => {
+      this.world?.fitViewport();
+      this.ui.checkOrientation();
+    };
     window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
     window.visualViewport?.addEventListener("resize", onResize);
+    this.ui.checkOrientation();
     this.ui.show("title");
     // ?artcheck=<graveyard|city>: test-only auto-run with staged enemies for screenshots
     const art = new URLSearchParams(location.search).get("artcheck");
@@ -89,6 +94,18 @@ class Game {
   private startRun(loadout?: WeaponKey[]) {
     const map = this.ui.selectedMap;
     const lo = loadout ?? (this.ui.selectedWeapons.length === 2 ? [...this.ui.selectedWeapons] : (["pistol", "shotgun"] as WeaponKey[]));
+    // mobile: go fullscreen + lock landscape (user-gesture context; best effort)
+    if (isTouchDevice) {
+      try {
+        const p = document.documentElement.requestFullscreen() as unknown as Promise<void> | undefined;
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } catch { /* not supported / denied */ }
+      try {
+        const o = screen.orientation as unknown as { lock?: (o: string) => Promise<void> } | undefined;
+        const r = o?.lock?.("landscape");
+        if (r && typeof r.catch === "function") r.catch(() => {});
+      } catch { /* not supported / denied */ }
+    }
     this.sim = createGame(map, isTouchDevice);
     startRun(this.sim, lo);
     this.world!.setMap(map, this.sim.obstacles);
@@ -123,7 +140,10 @@ class Game {
     if (dt > 0.25) dt = 0.25;
 
     const w = this.world!;
-    if (this.sim && this.ui.screen === "playing" && !this.paused) {
+    // touch portrait: game is blocked behind the rotate overlay — freeze the
+    // sim but keep rendering so the scene is alive when they rotate back
+    const portraitBlocked = this.ui.checkOrientation();
+    if (this.sim && this.ui.screen === "playing" && !this.paused && !portraitBlocked) {
       // pause key (Esc / touch pause button)
       if (this.input.input.pausePressed) { this.togglePause(); this.input.endFrame(); return; }
       // fixed-timestep sim

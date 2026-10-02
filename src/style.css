@@ -314,3 +314,64 @@ body { position: fixed; inset: 0; }
   #wave-wrap { top: 8px; left: 12px; }
   #score-wrap { top: 8px; right: 130px; }
 }
+
+/* ---------------- rotate overlay (touch portrait) ---------------- */
+
+#rotate-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: #05080a;
+  display: flex; align-items: center; justify-content: center;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.rotate-box { text-align: center; }
+.rotate-icon {
+  width: 46px; height: 84px;
+  border: 4px solid var(--amber); border-radius: 9px;
+  margin: 0 auto 26px;
+  position: relative;
+  animation: rotateme 1.8s ease-in-out infinite;
+}
+.rotate-icon::after {
+  content: ""; position: absolute; left: 50%; bottom: 6px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--amber); transform: translateX(-50%);
+}
+@keyframes rotateme {
+  0%, 25% { transform: rotate(0deg); }
+  65%, 100% { transform: rotate(-90deg); }
+}
+.rotate-title { font-size: 15px; color: var(--ink); letter-spacing: 2px; text-shadow: 0 3px 0 #000; }
+.rotate-sub { margin-top: 14px; font-size: 8px; color: var(--dim); line-height: 2; }
+
+/* ---------------- landscape phones: compact layout ---------------- */
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .game-title { font-size: clamp(26px, 9vh, 44px); }
+  .screen { gap: 8px; }
+  .screen h2 { font-size: clamp(16px, 6vh, 26px); }
+  .btn { padding: 10px 20px; font-size: 11px; }
+  #map-select { gap: 8px; }
+  .map-card { padding: 8px 12px; min-width: 120px; }
+  #loadout-grid { grid-template-columns: repeat(4, minmax(120px, 170px)); gap: 8px; }
+  .weapon-card { padding: 8px 6px; gap: 5px; }
+  .w-name { font-size: 9px; } .w-desc { font-size: 7px; } .w-stats { font-size: 6px; }
+  .credits { display: none; }
+  #touch-note { display: none; }
+  .tbtn { width: 56px; height: 56px; font-size: 7px; }
+  .tbtn-fire { width: 80px; height: 80px; font-size: 10px; }
+  .tbtn-small { width: 40px; height: 40px; }
+  #joystick { width: 104px; height: 104px; bottom: calc(56px + env(safe-area-inset-bottom)); }
+  #joy-knob { width: 44px; height: 44px; }
+  #btn-fire { bottom: calc(56px + env(safe-area-inset-bottom)); }
+  #btn-slide { bottom: calc(52px + env(safe-area-inset-bottom)); right: calc(118px + env(safe-area-inset-right)); }
+  #btn-jump { bottom: calc(150px + env(safe-area-inset-bottom)); right: calc(36px + env(safe-area-inset-right)); }
+  #btn-reload { bottom: calc(128px + env(safe-area-inset-bottom)); right: calc(112px + env(safe-area-inset-right)); }
+  #btn-swap { bottom: calc(110px + env(safe-area-inset-bottom)); right: calc(178px + env(safe-area-inset-right)); }
+  #btn-melee { bottom: calc(40px + env(safe-area-inset-bottom)); right: calc(178px + env(safe-area-inset-right)); }
+  #btn-sprint { bottom: calc(62px + env(safe-area-inset-bottom)); left: calc(150px + env(safe-area-inset-left)); }
+  #health-wrap { bottom: calc(150px + env(safe-area-inset-bottom)); width: min(220px, 30vw); height: 22px; }
+  #ammo-wrap { bottom: calc(225px + env(safe-area-inset-bottom)); right: calc(14px + env(safe-area-inset-right)); }
+  #ammo { font-size: 15px; }
+  #wave-label { font-size: 11px; }
+  #boss-bars { width: min(440px, 60vw); top: 8px; }
+}

@@ -125,6 +125,8 @@ interface EnemyView {
   action: THREE.AnimationAction | null;
   clipKey: string;
   dead: boolean;
+  mats: THREE.Material[];
+  baseOpacity: number[];
 }
 
 interface Telegraph {
@@ -181,15 +183,15 @@ export class World {
 
     // ---- lighting pass: the scene must READ. cold moonlight key, warm fill,
     // dim blue ambient so nothing is ever pitch black.
-    const hemi = new THREE.HemisphereLight(0x5a6f8e, 0x1a2030, 1.15);
+    const hemi = new THREE.HemisphereLight(0x5a6f8e, 0x1a2030, 1.25);
     this.scene.add(hemi);
-    const moon = new THREE.DirectionalLight(0x9db8dd, 1.0);
+    const moon = new THREE.DirectionalLight(0x9db8dd, 1.15);
     moon.position.set(-14, 22, 8);
     this.scene.add(moon);
-    const fill = new THREE.DirectionalLight(0xffd9a0, 0.28);
+    const fill = new THREE.DirectionalLight(0xffd9a0, 0.6);
     fill.position.set(12, 9, -14);
     this.scene.add(fill);
-    this.ambient = new THREE.AmbientLight(0x2a3a55, 0.5);
+    this.ambient = new THREE.AmbientLight(0x2a3a55, 0.65);
     this.scene.add(this.ambient);
 
     this.particles = new ParticlePool(isTouch ? 160 : 420);
@@ -487,7 +489,17 @@ export class World {
   private normalizeRig(scene: THREE.Object3D, targetLen: number, rotY: number, anchor: THREE.Vector3): THREE.Group {
     const g = new THREE.Group();
     const inner = new THREE.Group();
-    inner.add(scene.clone(true)); // clone: the cached template may be normalized more than once (arms)
+    // NOTE: each gun rig template is normalized exactly ONCE (one viewmodel
+    // per weapon), so the template is used directly — no clone. Cloning
+    // skinned rigs breaks their skeleton binding (plain clone) or their bind
+    // matrices (SkeletonUtils.clone), collapsing or displacing the gun.
+    inner.add(scene);
+    // strip the FPS arm meshes (node "ArmModel"): in a real FPS pose they sit
+    // between the camera and the gun and read as a giant tan blob. The gun
+    // meshes stay skinned to the armature so idle/shoot/reload still animate.
+    const stripped: THREE.Object3D[] = [];
+    inner.traverse((o) => { if (o.name === "ArmModel") stripped.push(o); });
+    for (const o of stripped) o.parent?.remove(o);
     // measure AFTER a first pass at unit scale
     const box = new THREE.Box3().setFromObject(inner);
     const size = box.getSize(new THREE.Vector3());
@@ -707,13 +719,45 @@ export class World {
         group.add(ring);
       }
       this.scene.add(group);
-      v = { group, mixer, clips, action: null, clipKey: "", dead: false };
+      // collect materials for the near-camera fade (enemies closer than ~1m
+      // fade out instead of becoming abstract near-plane blobs)
+      const mats: THREE.Material[] = [];
+      group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) {
+          const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          for (const m of list) {
+            if (m && !mats.includes(m)) {
+              m.transparent = true;
+              mats.push(m);
+            }
+          }
+        }
+      });
+      const baseOpacity = mats.map((m) => m.opacity);
+      v = { group, mixer, clips, action: null, clipKey: "", dead: false, mats, baseOpacity };
       this.enemyViews.set(e.id, v);
     }
 
     const d = ENEMIES[e.kind];
     v.group.position.set(e.pos.x, e.pos.y + (e.state === "spawn" ? -(1 - e.stateT / 0.9) * (d.flying ? 0 : 1.6) : 0), e.pos.z);
-    v.group.rotation.y = e.yaw;
+    // Quaternius rigs are authored facing +Z; the sim yaw convention faces -Z
+    // at yaw 0, so rotate the root by PI to face the movement direction.
+    v.group.rotation.y = e.yaw + Math.PI;
+
+    // near-camera fade: enemies inside ~1.9m fade out so a zombie in the
+    // player's face never becomes an unreadable screen-filling blob.
+    // (flying enemies use their true height, not the ground-enemy chest offset)
+    {
+      const dx = v.group.position.x - this.camera.position.x;
+      const chestY = v.group.position.y + (d.flying ? 0 : 1.0);
+      const dy = chestY - this.camera.position.y;
+      const dz = v.group.position.z - this.camera.position.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const f = THREE.MathUtils.clamp((dist - 0.9) / 1.0, 0, 1);
+      for (let i = 0; i < v.mats.length; i++) v.mats[i].opacity = v.baseOpacity[i] * f;
+      v.group.visible = f > 0.01;
+    }
 
     // shrieker banking
     if (e.kind === "shrieker") v.group.rotation.z = Math.sin(e.walkPhase * 0.7) * 0.15;

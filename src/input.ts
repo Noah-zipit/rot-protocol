@@ -60,7 +60,10 @@ export class InputManager {
   /** Request pointer lock (desktop). Call from a user gesture. */
   lockPointer() {
     if (this.isTouch) return;
-    this.canvas.requestPointerLock();
+    try {
+      const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+      if (r && typeof r.catch === "function") r.catch(() => {});
+    } catch { /* needs a user gesture; the next click retries */ }
   }
 
   get locked() {

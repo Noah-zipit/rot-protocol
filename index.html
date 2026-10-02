@@ -85,6 +85,15 @@
         <button id="btn-again" class="btn">PLAY AGAIN</button>
       </div>
 
+      <!-- Rotate overlay (touch portrait only, wired by UI.checkOrientation) -->
+      <div id="rotate-overlay" class="hidden">
+        <div class="rotate-box">
+          <div class="rotate-icon"></div>
+          <p class="rotate-title">ROTATE YOUR DEVICE</p>
+          <p class="rotate-sub">ROT PROTOCOL PLAYS IN LANDSCAPE</p>
+        </div>
+      </div>
+
       <div id="screen-loading" class="screen"><p id="loading-label">LOADING 0%</p></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

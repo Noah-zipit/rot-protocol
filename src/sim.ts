@@ -198,7 +198,26 @@ export function createGame(map: MapKey, isTouch: boolean): GameState {
 export function startRun(s: GameState, loadout: WeaponKey[]) {
   const p = s.player;
   p.pos = { x: 0, y: 0, z: 0 }; p.vel = { x: 0, y: 0, z: 0 };
-  p.yaw = 0; p.pitch = 0; p.hp = p.maxHp;
+  p.pitch = 0; p.hp = p.maxHp;
+  // spawn facing the most open direction: pick the yaw with the farthest
+  // obstacle inside a forward corridor, so the player never spawns staring
+  // point-blank into a wall or car
+  let bestYaw = 0, bestClear = -Infinity;
+  for (let i = 0; i < 16; i++) {
+    const yaw = (i / 16) * Math.PI * 2;
+    const dx = -Math.sin(yaw), dz = -Math.cos(yaw);
+    let minClear = Infinity;
+    for (const o of s.obstacles) {
+      const ox = o.x - p.pos.x, oz = o.z - p.pos.z;
+      const along = ox * dx + oz * dz;
+      if (along > 0.5) {
+        const perp = Math.abs(ox * dz - oz * dx);
+        if (perp < 3 + o.r) minClear = Math.min(minClear, along - o.r);
+      }
+    }
+    if (minClear > bestClear) { bestClear = minClear; bestYaw = yaw; }
+  }
+  p.yaw = bestYaw;
   p.sliding = false; p.iframes = 0; p.meleeCd = 0;
   p.loadout = loadout.map((key) => {
     const d = WEAPONS[key];
@@ -789,13 +808,15 @@ function updateShrieker(s: GameState, e: Enemy, dt: number, dist: number, nx: nu
   const hoverY = 2.5 + Math.sin(e.walkPhase * 0.7) * 0.3;
 
   if (e.state === "seek" || e.state === "spawn") {
-    // hover toward the player on a sine path
+    // hover toward the player on a sine path, but keep a ~3m standoff —
+    // never drift into the player's face
     e.pos.y += (hoverY - e.pos.y) * Math.min(1, 3 * dt);
     if (e.state === "seek") {
       const px = nx + -nz * Math.sin(e.flankPhase) * 0.6;
       const pz = nz + nx * Math.sin(e.flankPhase) * 0.6;
-      e.pos.x += px * e.speed * dt;
-      e.pos.z += pz * e.speed * dt;
+      const radial = Math.max(-1, Math.min(1, (dist - 3.0) * 0.8));
+      e.pos.x += (px * 0.5 + nx * radial) * e.speed * dt;
+      e.pos.z += (pz * 0.5 + nz * radial) * e.speed * dt;
       if (dist > 4 && e.swoopT <= 0) {
         e.state = "swoopIn"; e.stateT = 0;
       }
@@ -913,12 +934,16 @@ export function debugStage(s: GameState) {
   s.wave = 1;
   s.waveState = "active";
   s.spawnQueue = [];
+  const p = s.player;
+  const dx = -Math.sin(p.yaw), dz = -Math.cos(p.yaw);
   const kinds: EnemyKind[] = ["shambler", "runner", "brute", "rattler", "shrieker"];
-  const xs = [-4.5, -2, 0.5, 3, -3.5];
+  const lats = [-4.5, -2, 0.5, 3, -3.5];
   kinds.forEach((k, i) => {
     const e = spawnEnemy(s, k);
-    e.pos.x = xs[i];
-    e.pos.z = -7 - i * 1.2;
+    const fwd = 7 + i * 1.2, lat = lats[i] * 0.4;
+    // ahead of the player with a small lateral spread (right = (-dz, dx))
+    e.pos.x = p.pos.x + dx * fwd + -dz * lat;
+    e.pos.z = p.pos.z + dz * fwd + dx * lat;
     e.state = "seek";
     e.stateT = 0;
     if (ENEMIES[k].flying) e.pos.y = 2.4;

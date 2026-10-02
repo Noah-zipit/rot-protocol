@@ -205,4 +205,14 @@ export class UI {
   setLoading(pct: number, label: string) {
     this.el("loading-label").textContent = `${label} ${Math.round(pct * 100)}%`;
   }
+
+  /**
+   * Landscape enforcement on touch devices: in portrait the game is blocked
+   * behind a fullscreen rotate overlay. Returns true when blocked.
+   */
+  checkOrientation(): boolean {
+    const blocked = this.isTouch && window.innerHeight > window.innerWidth;
+    this.el("rotate-overlay").classList.toggle("hidden", !blocked);
+    return blocked;
+  }
 }

@@ -7,8 +7,8 @@
     <meta name="theme-color" content="#0b1210" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>ROT PROTOCOL — Pixel Zombie FPS</title>
-    <script type="module" crossorigin src="./assets/index-Bdez460n.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CKwYv5Zq.css">
+    <script type="module" crossorigin src="./assets/index-B7ZpnVit.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BnScAWhm.css">
   </head>
   <body>
     <div id="app">
@@ -85,6 +85,15 @@
         <p class="subtitle">ALL 10 WAVES SURVIVED</p>
         <div id="victory-stats" class="stats"></div>
         <button id="btn-again" class="btn">PLAY AGAIN</button>
+      </div>
+
+      <!-- Rotate overlay (touch portrait only, wired by UI.checkOrientation) -->
+      <div id="rotate-overlay" class="hidden">
+        <div class="rotate-box">
+          <div class="rotate-icon"></div>
+          <p class="rotate-title">ROTATE YOUR DEVICE</p>
+          <p class="rotate-sub">ROT PROTOCOL PLAYS IN LANDSCAPE</p>
+        </div>
       </div>
 
       <div id="screen-loading" class="screen"><p id="loading-label">LOADING 0%</p></div>
