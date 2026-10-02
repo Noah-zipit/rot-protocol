@@ -7,8 +7,8 @@
     <meta name="theme-color" content="#0b1210" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>ROT PROTOCOL — Pixel Zombie FPS</title>
-    <script type="module" crossorigin src="./assets/index-B7ZpnVit.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-BnScAWhm.css">
+    <script type="module" crossorigin src="./assets/index-BAe9QTTN.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BKGPw9xf.css">
   </head>
   <body>
     <div id="app">
@@ -94,6 +94,14 @@
           <p class="rotate-title">ROTATE YOUR DEVICE</p>
           <p class="rotate-sub">ROT PROTOCOL PLAYS IN LANDSCAPE</p>
         </div>
+      </div>
+
+      <!-- Pointer-lock prompt (desktop only, wired by UI.setLockOverlay) -->
+      <div id="lock-overlay" class="hidden">
+        <button class="lock-box" id="lock-box">
+          <p class="lock-title">CLICK TO CAPTURE MOUSE</p>
+          <p class="lock-sub">AIM + FIRE NEED POINTER LOCK</p>
+        </button>
       </div>
 
       <div id="screen-loading" class="screen"><p id="loading-label">LOADING 0%</p></div>
