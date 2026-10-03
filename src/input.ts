@@ -15,6 +15,8 @@ export interface InputState {
   swap2: boolean;
   meleePressed: boolean;
   pausePressed: boolean;
+  interactPressed: boolean; // expedition: exfil flare / use
+  usePressed: boolean;      // expedition: consume medkit
   lookDX: number;
   lookDY: number;
 }
@@ -29,6 +31,7 @@ function freshInput(): InputState {
     jumpPressed: false, slidePressed: false, fireHeld: false,
     reloadPressed: false, swap1: false, swap2: false,
     meleePressed: false, pausePressed: false,
+    interactPressed: false, usePressed: false,
     lookDX: 0, lookDY: 0,
   };
 }
@@ -85,6 +88,8 @@ export class InputManager {
         case "Digit1": this.input.swap1 = true; break;
         case "Digit2": this.input.swap2 = true; break;
         case "KeyV": this.input.meleePressed = true; break;
+        case "KeyE": this.input.interactPressed = true; break;
+        case "KeyH": this.input.usePressed = true; break;
         case "KeyM": this.onMute?.(); break;
         case "Escape": this.input.pausePressed = true; break;
       }
@@ -128,6 +133,7 @@ export class InputManager {
     i.jumpPressed = false; i.slidePressed = false;
     i.reloadPressed = false; i.swap1 = false; i.swap2 = false;
     i.meleePressed = false; i.pausePressed = false;
+    i.interactPressed = false; i.usePressed = false;
     i.lookDX = 0; i.lookDY = 0;
   }
 
@@ -198,6 +204,8 @@ export class InputManager {
     hold("btn-slide", () => { this.input.slidePressed = true; });
     hold("btn-reload", () => { this.input.reloadPressed = true; });
     hold("btn-melee", () => { this.input.meleePressed = true; });
+    hold("btn-interact", () => { this.input.interactPressed = true; });
+    hold("btn-medkit", () => { this.input.usePressed = true; });
     hold("btn-swap", () => {
       // alternate between the two loadout slots
       this.swapToggle = !this.swapToggle;

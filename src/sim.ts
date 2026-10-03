@@ -11,7 +11,7 @@ export type EnemyKind =
   | "shambler" | "runner" | "brute"
   | "rattler" | "shrieker"
   | "rotking" | "ripper" | "broodmother";
-export type MapKey = "graveyard" | "city";
+export type MapKey = "graveyard" | "city" | "deadzone";
 
 export const FIXED_DT = 1 / 60;
 
@@ -70,13 +70,15 @@ export interface PlayerState {
   loadout: WeaponState[]; cur: number; drawT: number;
   meleeCd: number; meleeT: number;
   bobPhase: number; moveSpeed: number;
+  dmgMul: number; speedMul: number; // stash upgrade multipliers (1 = unupgraded)
   eyeH: number; fov: number;
 }
 
 export type EnemyStateName =
   | "spawn" | "seek" | "windup" | "attack" | "die" | "slam"
   | "dashWindup" | "dashing" | "dashStun"
-  | "swoopIn" | "swoopOut";
+  | "swoopIn" | "swoopOut"
+  | "roam" | "investigate"; // expedition: wander / move-to-noise
 
 export interface Enemy {
   id: number; kind: EnemyKind;
@@ -93,6 +95,10 @@ export interface Enemy {
   dashDir: Vec3;     // ripper only: locked dash direction
   knockMul: number;  // damage taken multiplier (ripper stunned = 1.5)
   variant: number;
+  roamTx: number; roamTz: number; // roam/investigate target point
+  guardX: number; guardZ: number; // leash anchor (cache guards)
+  leash: number;                  // 0 = free roam, >0 = wander radius around guard
+  aggroR: number;                 // sight/noise radius that flips roam -> seek
 }
 
 export interface Obstacle { x: number; z: number; r: number; }
@@ -119,10 +125,50 @@ export type GameEvent =
   | { t: "dashTelegraph"; id: number; pos: Vec3; dir: Vec3 }
   | { t: "dashStun"; id: number }
   | { t: "gameOver" }
-  | { t: "groan"; pos: Vec3 };
+  | { t: "groan"; pos: Vec3 }
+  | { t: "lootPickup"; kind: LootKind; amount: number }
+  | { t: "useMedkit"; healed: number }
+  | { t: "flarePopped" }
+  | { t: "exfilReady" }
+  | { t: "exfilCancelled" }
+  | { t: "extracted" };
+
+// ---------------- expedition ----------------
+
+export type LootKind = "scrap" | "medkit" | "ammo" | "part";
+
+export interface LootItem {
+  id: number; kind: LootKind; pos: Vec3; amount: number; taken: boolean;
+}
+
+export interface ExpeditionState {
+  loot: LootItem[];
+  carried: { scrap: number; medkits: number; parts: number; ammoCollected: number };
+  caches: Vec3[];   // supply cache positions (compass markers)
+  crashPos: Vec3;   // crashed helicopter landmark
+  exfilPos: Vec3;
+  exfil: "idle" | "called" | "landed";
+  exfilT: number;   // flare countdown -> chopper
+  boardT: number;   // boarding window after landing
+  surgeT: number;   // surge spawn trickle timer
+  startTime: number;
+  lastShotT: number; // gunfire noise: widens roamer aggro briefly
+  shotsSeen: number;
+  seed: number;
+}
+
+export interface UpgradeLevels { dmg: number; hp: number; speed: number; ammo: number; }
+
+/** Hook for the expedition director (set by expedition.ts on import).
+ *  Lives on a mutable holder so sim.ts never imports expedition.ts. */
+export const expeditionHooks: {
+  step: ((s: GameState, inp: InputState, dt: number) => void) | null;
+} = { step: null };
 
 export interface GameState {
   map: MapKey;
+  mode: "wave" | "expedition";
+  half: number; // playable half-extent (28 arena, 62 dead zone)
   isTouch: boolean;
   player: PlayerState;
   enemies: Enemy[];
@@ -139,6 +185,8 @@ export interface GameState {
   events: GameEvent[];
   over: boolean;
   won: boolean;
+  exp: ExpeditionState | null;
+  exResult: { extracted: boolean } | null; // expedition: set on death/extract
   time: number;
   nextId: number;
   maxConcurrent: number;
@@ -161,26 +209,48 @@ export function makeObstacles(map: MapKey): Obstacle[] {
       const a = rnd() * Math.PI * 2, r = 10 + rnd() * 14;
       obs.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, r: 0.45 });
     }
-  } else {
+  } else if (map === "city") {
     const blocks: Array<[number, number]> = [[-16, -16], [16, -16], [-16, 16], [16, 16], [0, -20], [0, 20]];
     for (const [bx, bz] of blocks) obs.push({ x: bx, z: bz, r: 5.2 });
     for (let i = 0; i < 5; i++) {
       const a = rnd() * Math.PI * 2, r = 6 + rnd() * 18;
       obs.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, r: 1.3 });
     }
+  } else {
+    // DEAD ZONE: street-grid blocks (buildings r=5.2), wrecked cars (r=1.3),
+    // rubble piles (r=1.0), crashed helicopter (r=3.0 — expedition finds it).
+    // World renders each prop by collider radius, so sim/world stay in sync.
+    const blocks: Array<[number, number]> = [
+      [-40, -40], [-13, -40], [13, -40], [40, -40],
+      [-40, -13], [-13, -13], [13, -13], [40, -13],
+      [-40, 13], [-13, 13], [13, 13], [40, 13],
+      [-40, 40], [-13, 40], [13, 40], [40, 40],
+    ];
+    for (const [bx, bz] of blocks) obs.push({ x: bx, z: bz, r: 5.2 });
+    for (let i = 0; i < 10; i++) {
+      const a = rnd() * Math.PI * 2, r = 18 + rnd() * 34;
+      obs.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, r: 1.3 });
+    }
+    for (let i = 0; i < 8; i++) {
+      const a = rnd() * Math.PI * 2, r = 10 + rnd() * 42;
+      obs.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, r: 1.0 });
+    }
+    obs.push({ x: 10, z: 5, r: 3.0 }); // crash site
   }
   return obs;
 }
 
-export function createGame(map: MapKey, isTouch: boolean): GameState {
+export function createGame(map: MapKey, isTouch: boolean, mode: "wave" | "expedition" = "wave"): GameState {
   return {
-    map, isTouch,
+    map, mode, isTouch,
+    half: map === "deadzone" ? 62 : ARENA_HALF,
     player: {
       pos: { x: 0, y: 0, z: 0 }, vel: { x: 0, y: 0, z: 0 },
       yaw: 0, pitch: 0, hp: 100, maxHp: 100, lastDamageT: -99,
       onGround: true, sliding: false, slideT: 0, slideDir: { x: 0, y: 0, z: 0 },
       iframes: 0, loadout: [], cur: 0, drawT: 0,
       meleeCd: 0, meleeT: 0, bobPhase: 0, moveSpeed: 0,
+      dmgMul: 1, speedMul: 1,
       eyeH: 1.62, fov: 75,
     },
     enemies: [],
@@ -189,14 +259,18 @@ export function createGame(map: MapKey, isTouch: boolean): GameState {
     spawnQueue: [], spawnT: 0, trickleT: 0,
     score: 0, kills: 0, shotsFired: 0, shotsHit: 0,
     multiKills: 0, multiT: -99,
-    events: [], over: false, won: false, time: 0, nextId: 1,
+    events: [], over: false, won: false, exp: null, exResult: null, time: 0, nextId: 1,
     maxConcurrent: isTouch ? 8 : 14,
     hitstop: 0, bossIds: [],
   };
 }
 
-export function startRun(s: GameState, loadout: WeaponKey[]) {
+export function startRun(s: GameState, loadout: WeaponKey[], upg?: UpgradeLevels) {
   const p = s.player;
+  const u: UpgradeLevels = upg ?? { dmg: 0, hp: 0, speed: 0, ammo: 0 };
+  p.maxHp = 100 + 25 * u.hp;
+  p.dmgMul = 1 + 0.12 * u.dmg;
+  p.speedMul = 1 + 0.07 * u.speed;
   p.pos = { x: 0, y: 0, z: 0 }; p.vel = { x: 0, y: 0, z: 0 };
   p.pitch = 0; p.hp = p.maxHp;
   // spawn facing the most open direction: pick the yaw with the farthest
@@ -221,7 +295,8 @@ export function startRun(s: GameState, loadout: WeaponKey[]) {
   p.sliding = false; p.iframes = 0; p.meleeCd = 0;
   p.loadout = loadout.map((key) => {
     const d = WEAPONS[key];
-    return { key, mag: d.mag, reserve: d.reserve, cooldown: 0, reloading: false, reloadT: 0 };
+    const reserve = d.reserve < 0 ? d.reserve : Math.floor(d.reserve * (1 + 0.5 * u.ammo));
+    return { key, mag: d.mag, reserve, cooldown: 0, reloading: false, reloadT: 0 };
   });
   p.cur = 0; p.drawT = 0.4;
   s.enemies = []; s.wave = 0; s.waveState = "breather"; s.waveT = 2.0;
@@ -229,6 +304,7 @@ export function startRun(s: GameState, loadout: WeaponKey[]) {
   s.shotsFired = 0; s.shotsHit = 0;
   s.multiKills = 0; s.over = false; s.won = false; s.time = 0;
   s.bossIds = []; s.hitstop = 0;
+  s.exp = null; s.exResult = null; // expedition setup (re)builds exp after this
 }
 
 // ---------------- wave composition (mixed hordes + bosses) ----------------
@@ -260,7 +336,7 @@ export function buildWave(n: number): { queue: EnemyKind[]; boss: EnemyKind | nu
 }
 function count(q: EnemyKind[], k: EnemyKind) { let n = 0; for (const x of q) if (x === k) n++; return n; }
 
-function spawnEnemy(s: GameState, kind: EnemyKind, hpMulOverride?: number) {
+function spawnEnemy(s: GameState, kind: EnemyKind, hpMulOverride?: number, silent = false) {
   const d = ENEMIES[kind];
   const a = Math.random() * Math.PI * 2;
   const r = 22 + Math.random() * 4;
@@ -277,10 +353,26 @@ function spawnEnemy(s: GameState, kind: EnemyKind, hpMulOverride?: number) {
     slamT: -1, swoopT: 2 + Math.random() * 3,
     dashDir: { x: 0, y: 0, z: 0 }, knockMul: 1,
     variant: Math.floor(Math.random() * 2),
+    roamTx: 0, roamTz: 0, guardX: 0, guardZ: 0, leash: 0, aggroR: 12,
   };
   if (d.flying) e.pos.y = 2.4;
   s.enemies.push(e);
-  if (!IS_BOSS(kind)) s.events.push({ t: "groan", pos: { x: 0, y: 0, z: 0 } });
+  if (!IS_BOSS(kind) && !silent) s.events.push({ t: "groan", pos: { x: 0, y: 0, z: 0 } });
+  return e;
+}
+
+/** Expedition: spawn a zombie at an explicit position (roaming packs,
+ *  cache guards, exfil surge). Silent by default — aggro groans on wake. */
+export function spawnEnemyAt(
+  s: GameState, kind: EnemyKind, x: number, z: number,
+  opts?: { leash?: number; aggroR?: number; hpMul?: number; silent?: boolean }
+): Enemy {
+  const e = spawnEnemy(s, kind, opts?.hpMul, opts?.silent ?? true);
+  e.pos.x = x; e.pos.z = z;
+  e.roamTx = x; e.roamTz = z;
+  e.guardX = x; e.guardZ = z;
+  if (opts?.leash !== undefined) e.leash = opts.leash;
+  if (opts?.aggroR !== undefined) e.aggroR = opts.aggroR;
   return e;
 }
 
@@ -314,7 +406,7 @@ function collideObstacles(s: GameState, pos: Vec3, radius: number) {
       pos.z = o.z + (dz / d) * min;
     }
   }
-  const H = ARENA_HALF - 1;
+  const H = s.half - 1;
   pos.x = Math.max(-H, Math.min(H, pos.x));
   pos.z = Math.max(-H, Math.min(H, pos.z));
 }
@@ -360,7 +452,7 @@ export function stepSim(s: GameState, inp: InputState, dt: number) {
     p.vel.z = p.slideDir.z * sp + wz * 1.2;
     if (p.slideT <= 0) p.sliding = false;
   } else {
-    const target = sprinting ? SPRINT : WALK;
+    const target = (sprinting ? SPRINT : WALK) * p.speedMul;
     const accel = p.onGround ? 42 : 10;
     p.vel.x += (wx * target - p.vel.x) * Math.min(1, accel * dt / Math.max(1, target));
     p.vel.z += (wz * target - p.vel.z) * Math.min(1, accel * dt / Math.max(1, target));
@@ -448,12 +540,15 @@ export function stepSim(s: GameState, inp: InputState, dt: number) {
   // --- enemies ---
   updateEnemies(s, dt);
 
-  // --- waves ---
-  updateWaves(s, dt);
+  // --- mode director: waves for the arena, expedition logic for the Dead Zone
+  if (s.mode === "expedition" && expeditionHooks.step) expeditionHooks.step(s, inp, dt);
+  else updateWaves(s, dt);
 
   // --- death ---
   if (p.hp <= 0 && !s.over) {
     s.over = true;
+    // expedition: carried loot dies with you; the stash is untouched
+    if (s.mode === "expedition") s.exResult = { extracted: false };
     s.events.push({ t: "gameOver" });
   }
 }
@@ -531,7 +626,7 @@ export function fireWeapon(s: GameState, w: WeaponState) {
   hits.sort((a, b) => a.t - b.t);
   hits.forEach((h, i) => {
     const falloff = Math.max(0.4, 1 - (h.t / d.range) * 0.6) * (d.pierce ? Math.pow(0.75, i) : 1);
-    damageEnemy(s, h.e, d.damage * (h.head ? 2 : 1) * falloff * h.e.knockMul, h.head,
+    damageEnemy(s, h.e, d.damage * p.dmgMul * (h.head ? 2 : 1) * falloff * h.e.knockMul, h.head,
       { x: h.e.pos.x, y: h.e.pos.y + ENEMIES[h.e.kind].height * (h.head ? 0.92 : 0.55), z: h.e.pos.z });
   });
 }
@@ -543,6 +638,8 @@ function broodmotherShielded(s: GameState, e: Enemy): boolean {
 
 function damageEnemy(s: GameState, e: Enemy, dmg: number, headshot: boolean, pos: Vec3) {
   if (e.dead) return;
+  // getting shot wakes roamers up
+  if (e.state === "roam" || e.state === "investigate") { e.state = "seek"; e.stateT = 0; }
   // Broodmother shield: immune while any minion lives
   if (broodmotherShielded(s, e)) {
     s.events.push({ t: "shieldHit", pos });
@@ -635,6 +732,12 @@ function updateEnemies(s: GameState, dt: number) {
       case "spawn":
         if (e.stateT >= 0.9) { e.state = "seek"; e.stateT = 0; }
         break;
+      case "roam":
+        updateRoam(s, e, dt, dist);
+        break;
+      case "investigate":
+        updateInvestigate(s, e, dt, dist);
+        break;
       case "seek":
         if (e.kind === "rotking") { updateRotKing(s, e, dt, dist, nx, nz); break; }
         if (e.kind === "ripper") { updateRipper(s, e, dt, dist, nx, nz); break; }
@@ -645,7 +748,10 @@ function updateEnemies(s: GameState, dt: number) {
             e.flankPhase += dt * (e.kind === "rattler" ? 4.2 : 2.6);
             const fa = Math.sin(e.flankPhase) * (e.kind === "rattler" ? 0.9 : 0.55);
             mx = nx + -nz * fa; mz = nz + nx * fa;
-            const l = Math.hypot(mx, mz); mx /= l; mz /= l;
+            const l = Math.hypot(mx, mz);
+            // l is 0 when the enemy is exactly on the player (nx = nz = 0);
+            // dividing would poison pos with NaN
+            if (l > 0.001) { mx /= l; mz /= l; } else { mx = 0; mz = 0; }
           }
           const sp = e.speed * (e.kind === "rattler" ? 1 + 0.15 * Math.sin(e.flankPhase * 2) : 1);
           e.pos.x += mx * sp * dt;
@@ -763,7 +869,7 @@ function updateRipper(s: GameState, e: Enemy, dt: number, dist: number, nx: numb
         return;
       }
       // hit a wall or obstacle -> stun
-      const H = ARENA_HALF - 1 - d.radius;
+      const H = s.half - 1 - d.radius;
       let wallHit = Math.abs(e.pos.x) >= H - 0.01 || Math.abs(e.pos.z) >= H - 0.01;
       if (!wallHit) {
         for (const o of s.obstacles) {
@@ -844,6 +950,75 @@ function updateShrieker(s: GameState, e: Enemy, dt: number, dist: number, nx: nu
     e.pos.z -= nz * 4 * dt;
     e.pos.y += (hoverY - e.pos.y) * Math.min(1, 3 * dt);
     if (e.stateT > 0.8) { e.state = "seek"; e.stateT = 0; }
+  }
+}
+
+// --- expedition roam AI: wander, investigate noise, aggro on sight/sound ---
+
+/** Shared aggro check for roam/investigate. Returns true when the enemy
+ *  flips to "seek". Sprinting and recent gunfire widen the radius. */
+function aggroCheck(s: GameState, e: Enemy, dist: number): boolean {
+  const p = s.player;
+  if (p.hp <= 0 || s.over || s.won) return false;
+  let r = e.aggroR;
+  if (p.moveSpeed > 5.5) r += 3; // sprinting is loud
+  const ex = s.exp;
+  if (ex && s.time - ex.lastShotT < 1.2) r += 4; // recent gunfire
+  if (ex && ex.exfil !== "idle") r += 5; // the flare draws everything nearby
+  if (dist < r) {
+    e.state = "seek"; e.stateT = 0;
+    s.events.push({ t: "groan", pos: { x: 0, y: 0, z: 0 } });
+    return true;
+  }
+  return false;
+}
+
+function pickRoamTarget(s: GameState, e: Enemy) {
+  const cx = e.leash > 0 ? e.guardX : e.pos.x;
+  const cz = e.leash > 0 ? e.guardZ : e.pos.z;
+  const R = e.leash > 0 ? e.leash : 22;
+  const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * R;
+  const H = s.half - 2;
+  e.roamTx = Math.max(-H, Math.min(H, cx + Math.cos(a) * r));
+  e.roamTz = Math.max(-H, Math.min(H, cz + Math.sin(a) * r));
+}
+
+function updateRoam(s: GameState, e: Enemy, dt: number, dist: number) {
+  const d = ENEMIES[e.kind];
+  // gunfire noise pulls nearby roamers to investigate
+  const ex = s.exp;
+  if (ex && s.time - ex.lastShotT < 2.5) {
+    const nd = Math.hypot(e.pos.x - s.player.pos.x, e.pos.z - s.player.pos.z);
+    if (nd < 30) {
+      e.state = "investigate"; e.stateT = 0;
+      e.roamTx = s.player.pos.x; e.roamTz = s.player.pos.z;
+      return;
+    }
+  }
+  if (aggroCheck(s, e, dist)) return;
+  const dx = e.roamTx - e.pos.x, dz = e.roamTz - e.pos.z;
+  const dd = Math.hypot(dx, dz);
+  if (dd < 1.5) {
+    pickRoamTarget(s, e);
+  } else {
+    const sp = d.speed * 0.35;
+    e.pos.x += (dx / dd) * sp * dt;
+    e.pos.z += (dz / dd) * sp * dt;
+  }
+}
+
+function updateInvestigate(s: GameState, e: Enemy, dt: number, dist: number) {
+  const d = ENEMIES[e.kind];
+  if (aggroCheck(s, e, dist)) return;
+  const dx = e.roamTx - e.pos.x, dz = e.roamTz - e.pos.z;
+  const dd = Math.hypot(dx, dz);
+  if (dd < 2) {
+    e.state = "roam"; e.stateT = 0;
+    pickRoamTarget(s, e);
+  } else {
+    const sp = d.speed * 0.85;
+    e.pos.x += (dx / dd) * sp * dt;
+    e.pos.z += (dz / dd) * sp * dt;
   }
 }
 

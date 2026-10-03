@@ -423,3 +423,87 @@ body { position: fixed; inset: 0; }
   #wave-label { font-size: 11px; }
   #boss-bars { width: min(440px, 60vw); top: 8px; }
 }
+
+/* ---------- expedition mode (Dead Zone) ---------- */
+#compass {
+  position: absolute; top: 46px; left: 50%; transform: translateX(-50%);
+  width: 240px; height: 26px;
+  background: rgba(0,0,0,0.55); border: 1px solid #3a3f45; overflow: hidden;
+}
+#compass-strip { position: absolute; inset: 0; }
+.cm-card {
+  position: absolute; top: 2px; transform: translateX(-50%);
+  color: #cfd6dd; font-size: 12px;
+}
+.cm-mark {
+  position: absolute; top: 2px; transform: translateX(-50%);
+  font-size: 12px; font-weight: bold;
+}
+.cm-mark.mk-exfil { color: #39ff6a; }
+.cm-mark.mk-exfil-hot { color: #ffa63d; }
+.cm-mark.mk-cache { color: #ffd24a; }
+.cm-mark.mk-crash { color: #ff9a3d; }
+.cm-mark.mk-loot { color: #ffd24a; font-size: 10px; }
+.cm-mark.mk-threat { color: #ff4444; }
+#compass-caret {
+  position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+  color: #fff; font-size: 12px;
+}
+#compass-caret::before { content: "\25BE"; }
+
+#loot-bar {
+  position: absolute; top: 76px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 14px; font-size: 13px; color: #ffd24a;
+  background: rgba(0,0,0,0.55); padding: 3px 10px; border: 1px solid #3a3f45;
+}
+#loot-bar #loot-meds { color: #f2f2f2; }
+#loot-bar #loot-parts { color: #4cd4e8; }
+
+#exfil-status {
+  position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+  font-size: 14px; color: #cfd6dd;
+  background: rgba(0,0,0,0.55); padding: 4px 12px; border: 1px solid #3a3f45;
+}
+#exfil-status.hot { color: #ffa63d; border-color: #ffa63d; }
+
+#interact-prompt {
+  position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%);
+  font-size: 15px; color: #7dff9a;
+  background: rgba(0,0,0,0.6); padding: 5px 14px; border: 1px solid #39ff6a;
+}
+
+#edge-warning {
+  position: absolute; top: 110px; left: 50%; transform: translateX(-50%);
+  font-size: 15px; color: #ff4444;
+  background: rgba(0,0,0,0.6); padding: 5px 14px; border: 1px solid #ff4444;
+}
+
+/* title mode select */
+#mode-row {
+  display: flex; gap: 10px; justify-content: center;
+  margin-top: 8px; flex-wrap: wrap;
+}
+.mode-hint { font-size: 11px; color: #9aa3ab; max-width: 400px; }
+.btn-exp { background: #2e4a23; border-color: #7dff9a; }
+.btn-exp:hover { background: #3a5c2d; }
+.btn-dim { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+/* stash screen */
+#screen-stash .stats { margin-bottom: 10px; }
+#upgrade-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 12px; width: min(440px, 90%);
+}
+.upgrade-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  background: rgba(0,0,0,0.55); border: 1px solid #3a3f45; padding: 8px 10px;
+}
+.u-info { display: flex; flex-direction: column; text-align: left; }
+.u-name { font-size: 14px; color: #ffd24a; }
+.u-tier { color: #9aa3ab; font-size: 12px; }
+.u-desc { font-size: 11px; color: #9aa3ab; }
+.btn-small { font-size: 12px; padding: 6px 10px; }
+
+/* touch expedition buttons */
+.tbtn-exp { border-color: #7dff9a; color: #7dff9a; }

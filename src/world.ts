@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
-import type { GameState, Enemy, EnemyKind, MapKey, WeaponKey, Obstacle } from "./sim";
+import type { GameState, Enemy, EnemyKind, MapKey, WeaponKey, Obstacle, ExpeditionState } from "./sim";
 import { ENEMIES } from "./sim";
 
 export type QualityMode = "auto" | "high" | "medium" | "low";
@@ -167,6 +167,14 @@ export class World {
   private ambient: THREE.AmbientLight;
   private moonLight: THREE.DirectionalLight;
   private shieldMesh: THREE.Mesh | null = null;
+  // expedition: dead-zone props synced from sim state
+  private curMap: MapKey = "graveyard";
+  private expRef: ExpeditionState | null = null;
+  private lootViews = new Map<number, THREE.Mesh>();
+  private exfilBeam: THREE.Mesh | null = null;
+  private exfilRing: THREE.Mesh | null = null;
+  private crashPos: { x: number; z: number } | null = null;
+  private smokeT = 0;
   fps = 60;
   quality = 0; // 0 full, 1 reduced, 2 minimal
   qualityMode: QualityMode = "auto";
@@ -453,9 +461,89 @@ export class World {
     return Math.max(0.5, s.x, s.z);
   }
 
-  setMap(map: MapKey, obstacles: Obstacle[]) {
+  // ---------- dead-zone props ----------
+
+  /** Crashed helicopter landmark: tilted procedural airframe + fire light. */
+  private buildCrashSite(x: number, z: number) {
+    const g = new THREE.Group();
+    const hull = new THREE.MeshLambertMaterial({ color: 0x4a4a42 });
+    const dark = new THREE.MeshLambertMaterial({ color: 0x2c2c28 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 4.2), hull);
+    body.position.y = 1.0; g.add(body);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 4.6), dark);
+    tail.position.set(0.4, 1.5, 3.8); tail.rotation.z = 0.35; g.add(tail);
+    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.12, 0.5), dark);
+    rotor.position.y = 2.1; rotor.rotation.y = 0.7; g.add(rotor);
+    const rotor2 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 9), dark);
+    rotor2.position.y = 2.05; rotor2.rotation.y = 0.7; g.add(rotor2);
+    g.position.set(x, 0, z);
+    g.rotation.z = 0.28; g.rotation.y = 0.9;
+    g.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) { mesh.castShadow = true; mesh.receiveShadow = true; }
+    });
+    this.arenaGroup.add(g);
+    this.crashPos = { x, z };
+    const fire = new THREE.PointLight(0xff7a2a, 34, 20, 1.8);
+    fire.position.set(x, 2.2, z);
+    fire.userData.base = 34;
+    this.arenaGroup.add(fire);
+    this.flickerLights.push(fire);
+  }
+
+  private buildRubble(x: number, z: number) {
+    const mat = new THREE.MeshLambertMaterial({ color: 0x33363b });
+    for (let i = 0; i < 4; i++) {
+      const s = 0.5 + Math.random() * 0.7;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), mat);
+      m.position.set(x + (Math.random() - 0.5) * 1.4, s * 0.3, z + (Math.random() - 0.5) * 1.4);
+      m.rotation.y = Math.random() * Math.PI;
+      m.castShadow = true; m.receiveShadow = true;
+      this.arenaGroup.add(m);
+    }
+  }
+
+  /** Supply cache: crate + glowing marker, readable at distance. */
+  private buildCacheCrate(x: number, z: number) {
+    const crate = new THREE.Mesh(
+      new THREE.BoxGeometry(1.1, 1.1, 1.1),
+      new THREE.MeshLambertMaterial({ color: 0x5a5a2e })
+    );
+    crate.position.set(x, 0.55, z);
+    crate.rotation.y = 0.4;
+    crate.castShadow = true; crate.receiveShadow = true;
+    this.arenaGroup.add(crate);
+    const glow = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.3, 0.3),
+      new THREE.MeshBasicMaterial({ color: 0xffd24a })
+    );
+    glow.position.set(x, 1.45, z);
+    this.arenaGroup.add(glow);
+  }
+
+  /** Floating loot pickups, one unlit box per item (cheap + readable). */
+  private buildLootViews(ex: ExpeditionState) {
+    const geo = new THREE.BoxGeometry(0.42, 0.42, 0.42);
+    const colors: Record<string, number> = {
+      scrap: 0xd8a83c, medkit: 0xf2f2f2, ammo: 0x4c9a4c, part: 0x4cd4e8,
+    };
+    for (const l of ex.loot) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: colors[l.kind] ?? 0xffffff }));
+      m.position.set(l.pos.x, 0.6, l.pos.z);
+      this.arenaGroup.add(m);
+      this.lootViews.set(l.id, m);
+    }
+  }
+
+  setMap(map: MapKey, obstacles: Obstacle[], exp?: ExpeditionState | null) {
     this.arenaGroup.clear();
     this.flickerLights = [];
+    this.curMap = map;
+    this.expRef = exp ?? null;
+    this.lootViews.clear();
+    this.exfilBeam = null;
+    this.exfilRing = null;
+    this.crashPos = null;
     // deterministic scatter
     let seed = map === "graveyard" ? 777 : 4242;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -465,13 +553,14 @@ export class World {
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.set(isGrave ? 0x1a2632 : 0x12161d);
       this.scene.fog.near = 10;
-      this.scene.fog.far = this.isTouch ? 40 : 60;
+      this.scene.fog.far = map === "deadzone" ? 110 : this.isTouch ? 40 : 60;
     }
 
     const groundTex = groundTexture(map);
-    groundTex.repeat.set(12, 12);
+    const dz = map === "deadzone";
+    groundTex.repeat.set(dz ? 30 : 12, dz ? 30 : 12);
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(64, 64),
+      new THREE.PlaneGeometry(dz ? 220 : 64, dz ? 220 : 64),
       new THREE.MeshLambertMaterial({ map: groundTex, color: 0xffffff })
     );
     ground.rotation.x = -Math.PI / 2;
@@ -528,7 +617,7 @@ export class World {
         this.arenaGroup.add(l);
         this.flickerLights.push(l);
       }
-    } else {
+    } else if (map === "city") {
       // --- CITY (poly.pizza City Pack): buildings on the 6 blocks, cars on the 5 randoms ---
       const blocks: Array<[number, number]> = [[-16, -16], [16, -16], [-16, 16], [16, 16], [0, -20], [0, 20]];
       // scales chosen so each building's footprint half-diagonal ≈ collider r (5.2):
@@ -595,6 +684,98 @@ export class World {
         const l = new THREE.PointLight(0xffc37a, 34, 22, 1.8);
         l.position.set(lx, 5.2, lz);
         l.userData.base = 34;
+        this.arenaGroup.add(l);
+        this.flickerLights.push(l);
+      }
+    } else {
+      // --- DEAD ZONE (expedition): ruined city district, ~4x the arena ---
+      // Props are placed from the sim colliders, so collision and visuals
+      // stay in sync by construction: r>=5 building, r>=2.5 crash site,
+      // r>=1.2 wrecked car, r>=0.9 rubble, else supply crate.
+      const ex = this.expRef;
+      const roadTex = pixelTexture((g, w, h) => {
+        g.fillStyle = "#14171c"; g.fillRect(0, 0, w, h);
+        g.fillStyle = "#8a7a3a";
+        for (let y = 0; y < h; y += 16) g.fillRect(w / 2 - 1, y, 2, 8);
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = "#0e1116";
+          g.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 2);
+        }
+      });
+      roadTex.repeat.set(24, 1);
+      const roadMat = new THREE.MeshLambertMaterial({ map: roadTex });
+      for (const c of [-40, -20, 0, 20, 40]) {
+        const rh = new THREE.Mesh(new THREE.PlaneGeometry(128, 4.5), roadMat);
+        rh.rotation.x = -Math.PI / 2; rh.position.set(0, 0.02, c);
+        rh.receiveShadow = true; this.arenaGroup.add(rh);
+        const rv = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 128), roadMat);
+        rv.rotation.x = -Math.PI / 2; rv.position.set(c, 0.02, 0);
+        rv.receiveShadow = true; this.arenaGroup.add(rv);
+      }
+      const bModels: Array<[string, number]> = [
+        ["city/building.glb", 1.8], ["city/large1.glb", 3.7], ["city/large2.glb", 4.6],
+      ];
+      const cars = ["city/car.glb", "city/suv.glb", "city/policecar.glb"];
+      let bi = 0, ci = 0;
+      for (const o of obstacles) {
+        if (o.r >= 5) {
+          const [mpath, mscale] = bModels[bi % bModels.length];
+          this.placeKit(mpath, o.x, o.z, { yaw: (bi % 4) * Math.PI / 2, scale: mscale });
+          bi++;
+        } else if (o.r >= 2.5) {
+          this.buildCrashSite(o.x, o.z);
+        } else if (o.r >= 1.2) {
+          this.placeKit(cars[ci % cars.length], o.x, o.z, { yaw: (ci * 2.3) % (Math.PI * 2), tilt: ci % 2 ? 0.12 : 0 });
+          ci++;
+        } else if (o.r >= 0.9) {
+          this.buildRubble(o.x, o.z);
+        } else {
+          this.buildCacheCrate(o.x, o.z);
+        }
+      }
+      // exfil clearing + beacon
+      if (ex) {
+        const fx = ex.exfilPos.x, fz = ex.exfilPos.z;
+        const pad = new THREE.Mesh(
+          new THREE.CircleGeometry(7, 28),
+          new THREE.MeshLambertMaterial({ color: 0x1d2a1e })
+        );
+        pad.rotation.x = -Math.PI / 2; pad.position.set(fx, 0.03, fz);
+        pad.receiveShadow = true; this.arenaGroup.add(pad);
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(6.4, 7, 40),
+          new THREE.MeshBasicMaterial({ color: 0x39ff6a, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+        );
+        ring.rotation.x = -Math.PI / 2; ring.position.set(fx, 0.06, fz);
+        this.arenaGroup.add(ring);
+        this.exfilRing = ring;
+        const beam = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.1, 1.6, 34, 12, 1, true),
+          new THREE.MeshBasicMaterial({ color: 0x39ff6a, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+        );
+        beam.position.set(fx, 17, fz);
+        this.arenaGroup.add(beam);
+        this.exfilBeam = beam;
+        this.buildLootViews(ex);
+      }
+      // boundary: concrete barriers at the zone edge
+      const wallMat = new THREE.MeshLambertMaterial({ color: 0x3a3f45 });
+      const B = 63;
+      const mkWall = (w: number, d: number, x: number, z: number) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.7, d), wallMat);
+        m.position.set(x, 0.85, z);
+        m.castShadow = true; m.receiveShadow = true;
+        this.arenaGroup.add(m);
+      };
+      mkWall(130, 1, 0, B); mkWall(130, 1, 0, -B);
+      mkWall(1, 130, B, 0); mkWall(1, 130, -B, 0);
+      // sodium lamps for readability across the big map
+      const lampPos: Array<[number, number]> = [[-20, -20], [20, 20], [-20, 20], [20, -20], [0, 0]];
+      for (const [lx, lz] of lampPos) {
+        this.placeKit("city/trafficlight.glb", lx, lz, { yaw: Math.atan2(-lx, -lz), scale: 1.6 });
+        const l = new THREE.PointLight(0xffc37a, 30, 24, 1.8);
+        l.position.set(lx, 5.2, lz);
+        l.userData.base = 30;
         this.arenaGroup.add(l);
         this.flickerLights.push(l);
       }
@@ -854,6 +1035,8 @@ export class World {
   private enemyClipFor(e: Enemy): string {
     switch (e.state) {
       case "spawn": return "idle";
+      case "roam": return "walk";         // expedition: wandering pack
+      case "investigate": return "run";   // expedition: converging on noise
       case "seek": return e.speed > 3.4 ? "run" : "walk";
       case "windup":
       case "attack": return "attack";
@@ -1334,6 +1517,39 @@ export class World {
     // particles
     this.particles.update(dt);
 
+    // ---- expedition (dead zone): loot bob/spin, exfil beacon, crash smoke ----
+    if (this.expRef) {
+      for (const l of this.expRef.loot) {
+        const v = this.lootViews.get(l.id);
+        if (!v) continue;
+        v.visible = !l.taken;
+        if (l.taken) continue;
+        v.position.y = 0.6 + Math.sin(timeSec * 3 + l.id) * 0.15;
+        v.rotation.y += dt * 2;
+      }
+      if (this.exfilBeam && this.exfilRing) {
+        const st = this.expRef.exfil;
+        const col = st === "idle" ? 0x39ff6a : st === "called" ? 0xffa63d : 0x7dff9a;
+        (this.exfilBeam.material as THREE.MeshBasicMaterial).color.set(col);
+        (this.exfilRing.material as THREE.MeshBasicMaterial).color.set(col);
+        const pulse = 0.75 + Math.sin(timeSec * (st === "idle" ? 2 : 7)) * 0.25;
+        this.exfilBeam.scale.set(pulse, 1, pulse);
+        (this.exfilRing.material as THREE.MeshBasicMaterial).opacity = 0.45 + pulse * 0.3;
+      }
+      if (this.crashPos) {
+        this.smokeT -= dt;
+        if (this.smokeT <= 0) {
+          this.smokeT = 0.35;
+          this.particles.burst(this.crashPos.x, 2.6, this.crashPos.z, 2, 0.7, 1.6, new THREE.Color(0x3a3a3a), 1.6);
+        }
+      }
+      // keep the shadow frustum on the player across the big map
+      if (this.curMap === "deadzone") {
+        this.moonLight.position.set(p.pos.x - 18, 30, p.pos.z + 10);
+        this.moonLight.target.position.set(p.pos.x, 0, p.pos.z);
+      }
+    }
+
     // melee auto-hide: main.ts calls setGun back after swing
   }
 
@@ -1343,7 +1559,9 @@ export class World {
     const q = this.quality;
     // tighter fog on minimal
     if (this.scene.fog instanceof THREE.Fog) {
-      this.scene.fog.far = q === 2 ? 30 : this.isTouch ? 40 : 60;
+      this.scene.fog.far = this.curMap === "deadzone"
+        ? 110
+        : q === 2 ? 30 : this.isTouch ? 40 : 60;
     }
     // shadows are the single most expensive feature: off at minimal tier,
     // on otherwise (manual Low pins quality 2; Auto only gets here when the

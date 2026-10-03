@@ -4,11 +4,15 @@
  */
 import "@fontsource/press-start-2p/index.css";
 import "./style.css";
-import { createGame, startRun, stepSim, debugStage, FIXED_DT, ENEMIES, IS_BOSS, type GameState, type GameEvent, type WeaponKey } from "./sim";
+import { createGame, startRun, stepSim, debugStage, FIXED_DT, ENEMIES, IS_BOSS, expeditionHooks, type GameState, type GameEvent, type WeaponKey } from "./sim";
 import { InputManager, isTouchDevice } from "./input";
 import { GameAudio } from "./audio";
 import { World } from "./world";
 import { UI } from "./ui";
+import { loadStash, saveStash, buyUpgrade, startExpeditionRun, stepExpedition, type Stash } from "./expedition";
+
+// expedition sim step hook: sim.ts never imports expedition.ts, so no cycle
+expeditionHooks.step = stepExpedition;
 
 const BOSS_NAMES: Record<string, string> = {
   rotking: "THE ROT KING",
@@ -28,6 +32,8 @@ class Game {
   private meleeReturnT = 0;
   private paused = false;
   private muted = false;
+  // expedition: persistent stash (banked loot + upgrades, survives death)
+  private stash: Stash = loadStash();
   // desktop pointer-lock tracking: losing lock mid-run (or never acquiring
   // it) leaves the player defenseless — auto-pause instead
   private lockWasHeld = false;
@@ -72,11 +78,30 @@ class Game {
 
   private wireUI() {
     const ui = this.ui;
-    ui.onStart = () => {
+    ui.onMode = () => {
       this.audio.unlock();
       this.audio.uiClick();
       ui.resetLoadout();
       ui.show("loadout");
+    };
+    ui.onStash = () => {
+      this.audio.unlock();
+      this.audio.uiClick();
+      this.ui.renderStash(this.stash);
+      this.ui.show("stash");
+    };
+    ui.onStashBack = () => {
+      this.audio.uiClick();
+      this.ui.show("title");
+    };
+    ui.onBuyUpgrade = (key) => {
+      if (buyUpgrade(this.stash, key)) {
+        saveStash(this.stash);
+        this.ui.renderStash(this.stash);
+        this.audio.pickup();
+      } else {
+        this.audio.dryFire();
+      }
     };
     ui.onDeploy = () => {
       this.audio.unlock();
@@ -103,7 +128,7 @@ class Game {
   }
 
   private startRun(loadout?: WeaponKey[]) {
-    const map = this.ui.selectedMap;
+    const isExp = this.ui.gameMode === "expedition";
     const lo = loadout ?? (this.ui.selectedWeapons.length === 2 ? [...this.ui.selectedWeapons] : (["pistol", "shotgun"] as WeaponKey[]));
     // mobile: go fullscreen + lock landscape (user-gesture context; best effort)
     if (isTouchDevice) {
@@ -117,9 +142,16 @@ class Game {
         if (r && typeof r.catch === "function") r.catch(() => {});
       } catch { /* not supported / denied */ }
     }
-    this.sim = createGame(map, isTouchDevice);
-    startRun(this.sim, lo);
-    this.world!.setMap(map, this.sim.obstacles);
+    if (isExp) {
+      this.sim = createGame("deadzone", isTouchDevice, "expedition");
+      startExpeditionRun(this.sim, lo, this.stash);
+      this.world!.setMap("deadzone", this.sim.obstacles, this.sim.exp);
+    } else {
+      const map = this.ui.selectedMap;
+      this.sim = createGame(map, isTouchDevice);
+      startRun(this.sim, lo);
+      this.world!.setMap(map, this.sim.obstacles);
+    }
     this.world!.clearEnemies();
     this.world!.setGun(lo[0]);
     this.paused = false;
@@ -127,7 +159,10 @@ class Game {
     this.runStartT = performance.now();
     this.ui.show("playing");
     if (!isTouchDevice) this.input.lockPointer();
-    this.ui.banner("PROTOCOL ACTIVE", "SURVIVE 10 WAVES");
+    this.ui.banner(
+      isExp ? "DEAD ZONE" : "PROTOCOL ACTIVE",
+      isExp ? "LOOT · SURVIVE · EXFIL — DEATH LOSES YOUR CARRY" : "SURVIVE 10 WAVES"
+    );
   }
 
   private toTitle() {
@@ -205,8 +240,17 @@ class Game {
         // buttons, which reads as a stuck death screen.
         if (document.pointerLockElement) document.exitPointerLock();
       }
-      if (this.sim.over) this.ui.showGameOver(this.sim);
-      else if (this.sim.won) this.ui.showVictory(this.sim);
+      if (this.sim.over) {
+        if (this.sim.mode === "expedition") {
+          // extracted runs already show the end screen from the
+          // "extracted" event; death loses the carried loot
+          if (!this.sim.exResult?.extracted) this.ui.showExpeditionDeath(this.sim);
+        } else {
+          this.ui.showGameOver(this.sim);
+        }
+      } else if (this.sim.won && !(this.sim.mode === "expedition" && this.sim.exResult?.extracted)) {
+        this.ui.showVictory(this.sim);
+      }
 
       // Desktop: prompt to (re)capture the mouse whenever the game is live
       // but pointer lock is not held — otherwise clicks silently do nothing.
@@ -323,6 +367,37 @@ class Game {
         break;
       case "groan":
         a.groan();
+        break;
+      case "lootPickup":
+        a.pickup();
+        this.ui.popup(
+          ev.kind === "scrap" ? `+${ev.amount} SCRAP`
+          : ev.kind === "medkit" ? "+1 MEDKIT"
+          : ev.kind === "ammo" ? "+AMMO"
+          : `+${ev.amount} PART`,
+          "score"
+        );
+        break;
+      case "useMedkit":
+        a.pickup();
+        this.ui.popup("MEDKIT +50 HP", "info");
+        break;
+      case "flarePopped":
+        a.waveHorn();
+        this.ui.banner("FLARE POPPED", "SURGE INBOUND — HOLD THE ZONE", 3000);
+        break;
+      case "exfilReady":
+        a.waveHorn();
+        this.ui.banner("CHOPPER LANDED", "BOARD NOW — CLOCK IS TICKING", 3000);
+        break;
+      case "exfilCancelled":
+        this.ui.popup("EXFIL CANCELLED", "info");
+        break;
+      case "extracted":
+        // doExtract already banked the loot into localStorage; re-read so the
+        // in-memory stash matches instead of clobbering the save on next write
+        this.stash = loadStash();
+        this.ui.showExpeditionEnd(s, this.stash);
         break;
       case "gameOver":
         break;
