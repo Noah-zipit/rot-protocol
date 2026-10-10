@@ -17,5 +17,20 @@
     "playwright": "^1.63.0",
     "typescript": "^5.9.2",
     "vite": "^7.1.7"
-  }
+  },
+  "description": "ROT PROTOCOL — a browser-based pixel-art zombie FPS built with Vite, TypeScript and Three.js. Ten waves, three bosses, one finale.",
+  "license": "MIT",
+  "author": "Ashar Qaisar <noahext994@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Noah-zipit/rot-protocol.git"
+  },
+  "keywords": [
+    "game",
+    "fps",
+    "three.js",
+    "vite",
+    "typescript",
+    "pixel-art"
+  ]
 }
