@@ -3,6 +3,7 @@
 **Containment failed. Survive the waves.**
 
 A first-person, pixel-art zombie survival shooter that runs in the browser.
+Play it live: https://noah-zipit.github.io/rot-protocol/
 Ten waves, three bosses, two maps, one finale. Built with Vite + TypeScript +
 Three.js. No backend, no accounts, no downloads beyond the first page load.
 
