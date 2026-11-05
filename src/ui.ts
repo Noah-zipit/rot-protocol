@@ -398,7 +398,9 @@ export class UI {
   /** Reflect the active quality tier on the pause-screen selector. */
   setQualityMode(mode: string) {
     this.el("quality-row").querySelectorAll(".qbtn").forEach((b) => {
-      b.classList.toggle("active", (b as HTMLElement).dataset.q === mode);
+      const on = (b as HTMLElement).dataset.q === mode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 }
