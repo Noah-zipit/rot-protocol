@@ -77,11 +77,13 @@ export class UI {
     for (const m of maps) {
       const b = document.createElement("button");
       b.className = "map-card" + (m.key === this.selectedMap ? " selected" : "");
+      b.setAttribute("aria-pressed", String(m.key === this.selectedMap));
       b.innerHTML = `<span class="map-name">${m.label}</span><span class="map-desc">${m.desc}</span>`;
       b.addEventListener("click", () => {
         this.selectedMap = m.key;
-        wrap.querySelectorAll(".map-card").forEach((x) => x.classList.remove("selected"));
+        wrap.querySelectorAll(".map-card").forEach((x) => { x.classList.remove("selected"); x.setAttribute("aria-pressed", "false"); });
         b.classList.add("selected");
+        b.setAttribute("aria-pressed", "true");
       });
       wrap.appendChild(b);
     }
@@ -96,6 +98,7 @@ export class UI {
       const card = document.createElement("button");
       card.className = "weapon-card";
       card.dataset.key = k;
+      card.setAttribute("aria-pressed", "false");
       card.innerHTML = `
         <span class="w-name">${d.name}</span>
         <span class="w-desc">${d.desc}</span>
@@ -110,16 +113,18 @@ export class UI {
     if (i >= 0) {
       this.selectedWeapons.splice(i, 1);
       card.classList.remove("selected");
+      card.setAttribute("aria-pressed", "false");
     } else if (this.selectedWeapons.length < 2) {
       this.selectedWeapons.push(k);
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
     }
     (this.el("btn-deploy") as HTMLButtonElement).disabled = this.selectedWeapons.length !== 2;
   }
 
   resetLoadout() {
     this.selectedWeapons = [];
-    this.el("loadout-grid").querySelectorAll(".weapon-card").forEach((x) => x.classList.remove("selected"));
+    this.el("loadout-grid").querySelectorAll(".weapon-card").forEach((x) => { x.classList.remove("selected"); x.setAttribute("aria-pressed", "false"); });
     (this.el("btn-deploy") as HTMLButtonElement).disabled = true;
   }
 
