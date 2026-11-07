@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://noah-zipit.github.io/rot-protocol/sitemap.xml
