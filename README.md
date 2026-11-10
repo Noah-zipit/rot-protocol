@@ -54,6 +54,8 @@ npm install
 npm run dev      # local dev server
 npm run build    # tsc + vite build -> dist/
 npm run preview  # serve dist/ locally for a smoke test
+npm run verify   # headless sim checks: wave sim NaN scan + expedition
+                 # mode end-to-end (extract, death, upgrades, regression)
 ```
 
 Stack: Vite 7, TypeScript 5, Three.js (npm). No frameworks.
