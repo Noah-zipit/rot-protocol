@@ -96,14 +96,27 @@ The simulation is already netcode-ready by construction:
 To add netcode later: serialize `GameState` snapshots, exchange `InputState`
 per tick, run the same `stepSim` on both ends. No rewrite of game logic.
 
-## Deploy (Vercel, static)
+## Deploy (GitHub Pages, static)
 
-`npm run build` produces `dist/` — a fully static site. Deploy options:
+`npm run build` produces `dist/` — a fully static site. The live game at
+https://noah-zipit.github.io/rot-protocol/ is served from the `gh-pages`
+branch, which holds a built copy of `dist/` plus a `.nojekyll` file
+(Pages is set to deploy from that branch). To publish a new build:
 
-- **Vercel CLI:** `vercel --prod` from this directory (static, no config needed).
-- **Vercel dashboard:** import the repo, framework preset "Vite", build
-  command `npm run build`, output directory `dist`.
-- Any static host works: `npx serve dist` or drop `dist/` on Netlify/CF Pages.
+```bash
+npm run build
+git worktree add /tmp/rot-pages gh-pages
+cp -r dist/. /tmp/rot-pages/          # .nojekyll already lives on the branch
+git -C /tmp/rot-pages add -A
+git -C /tmp/rot-pages commit -m "pages: rebuild"
+git -C /tmp/rot-pages push origin gh-pages
+git worktree remove /tmp/rot-pages
+```
+
+Alternatives: Vercel CLI (`vercel --prod` from this directory, no config
+needed) or the Vercel dashboard (framework preset "Vite", build command
+`npm run build`, output directory `dist`); any static host works too
+(`npx serve dist`, Netlify, CF Pages).
 
 No environment variables, no server functions, no database.
 
