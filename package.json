@@ -20,7 +20,7 @@
     "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "typescript": "^5.9.2",
-    "vite": "^7.1.7"
+    "vite": "^7.3.8"
   },
   "description": "ROT PROTOCOL — a browser-based pixel-art zombie FPS built with Vite, TypeScript and Three.js. Ten waves, three bosses, one finale.",
   "license": "MIT",
