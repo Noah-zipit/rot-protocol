@@ -504,7 +504,7 @@ export function stepSim(s: GameState, inp: InputState, dt: number) {
     if (inp.swap1 && p.loadout.length > 0 && p.cur !== 0) { swapTo(s, 0); }
     else if (inp.swap2 && p.loadout.length > 1 && p.cur !== 1) { swapTo(s, 1); }
 
-    if (inp.reloadPressed && !w.reloading && w.mag < WEAPONS[w.key].mag && (w.reserve > 0 || w.reserve < 0)) {
+    if (inp.reloadPressed && !w.reloading && w.mag < WEAPONS[w.key].mag && (w.reserve !== 0)) {
       w.reloading = true; w.reloadT = WEAPONS[w.key].reloadTime;
       s.events.push({ t: "reloadStart", weapon: w.key });
     }
