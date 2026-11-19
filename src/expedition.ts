@@ -42,8 +42,8 @@ export function loadStash(): Stash {
     return {
       scrap: Math.max(0, Math.floor(p.scrap ?? 0)),
       parts: Math.max(0, Math.floor(p.parts ?? 0)),
-      upgrades: { ...d.upgrades, ...(p.upgrades ?? {}) },
-      best: { ...d.best, ...(p.best ?? {}) },
+      upgrades: { ...d.upgrades, ...p.upgrades },
+      best: { ...d.best, ...p.best },
     };
   } catch { return defaultStash(); }
 }
